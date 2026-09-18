@@ -491,11 +491,12 @@ The offline test suite requires no external network access or API credentials. I
 ```bash
 pytest -q
 ```
-**Test Coverage (91 passed tests):**
+**Test Coverage (93 passed tests):**
 - `tests/test_api.py`: HTTP status codes, malformed JSON handling, input validation.
 - `tests/test_guardrails.py`: Window expansions, boundary clamping, non-finite handling, outage resilience.
 - `tests/test_optimizer.py`: LP solution cost matching across reference scenarios, soft resolution fallback.
 - `tests/test_validator.py`: Catching simulated physics violations (energy imbalance, C-rate breaches, battery bounds).
+- `tests/test_fuzz.py`: Randomised robustness: 1,000 random scenarios (0.001x to 1,000,000x magnitudes, zero-rate batteries, zero tariffs, 0-3 random and often contradictory directives) always yield a plan that passes the replay check, and 150 random valid requests (shuffled hours, numeric strings, extra fields) never return 5xx.
 
 ### 2. Public Scenario Verification
 Runs all ten public reference scenarios through the solver and replay auditor:
