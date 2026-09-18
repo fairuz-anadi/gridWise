@@ -511,12 +511,12 @@ A prebuilt container image is available on GitHub Container Registry (public, no
 The image exposes **port 8000**, binds to `0.0.0.0`, runs as a non-root user and contains no secrets;
 `/health` answers within a few seconds of `docker run`:
 ```bash
-docker pull ghcr.io/fairuz-anadi/gridwise@sha256:480b3ebb712c696cfa8da027ed668b87233c3b7ff18d936affbecab9993304ea
+docker pull ghcr.io/fairuz-anadi/gridwise@sha256:35558555bee3635e1c147a6bc803e3b17387472c5b7dec9229da54238bf54e3c
 
 docker run --rm -p 8000:8000 \
   -e LLM_PROVIDER=openai \
   -e OPENAI_API_KEY=your-key \
-  ghcr.io/fairuz-anadi/gridwise@sha256:480b3ebb712c696cfa8da027ed668b87233c3b7ff18d936affbecab9993304ea
+  ghcr.io/fairuz-anadi/gridwise@sha256:35558555bee3635e1c147a6bc803e3b17387472c5b7dec9229da54238bf54e3c
 ```
 
 ---
