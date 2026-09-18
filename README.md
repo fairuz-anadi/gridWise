@@ -232,6 +232,10 @@ The solver runs using `scipy.optimize.linprog(method="highs")`. Following the so
 | `LLM_CACHE` | no | `1` | `0` disables the interpretation cache |
 | `PORT` | no | `8000` | Listening port (hosting platforms inject it) |
 
+**Judging configuration:** `LLM_PROVIDER=openai` with **both** `OPENAI_API_KEY` and `GROQ_API_KEY` set —
+OpenAI answers first, Groq is the automatic hedge/fallback. This is the configuration of the live deployment
+and of every measurement quoted in this document.
+
 **Secret handling:** keys come only from the environment or a local `.env`. `.env` is gitignored and
 dockerignored, so it is never committed or baked into the image; pass keys to Docker with `-e` or `--env-file`.
 Never put real key values in the README, issues, or screenshots.
@@ -267,9 +271,9 @@ Content-Type: application/json
     "The library is extending book-return hours next week."
   ],
   "battery": {
-    "capacity_kwh": 200,
+    "capacity_kwh": 220,
     "initial_energy_kwh": 100,
-    "minimum_energy_kwh": 20,
+    "minimum_energy_kwh": 35,
     "max_charge_kwh_per_hour": 50,
     "max_discharge_kwh_per_hour": 50
   },
@@ -466,7 +470,9 @@ docker run --rm -p 8000:8000 --env-file .env gridwise:latest
 ```
 
 ### Public Container Registry
-A prebuilt container image is available on GitHub Container Registry:
+A prebuilt container image is available on GitHub Container Registry (public, no login required).
+The image exposes **port 8000**, binds to `0.0.0.0`, runs as a non-root user and contains no secrets;
+`/health` answers within a few seconds of `docker run`:
 ```bash
 docker pull ghcr.io/fairuz-anadi/gridwise@sha256:480b3ebb712c696cfa8da027ed668b87233c3b7ff18d936affbecab9993304ea
 
