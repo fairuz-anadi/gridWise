@@ -1,12 +1,13 @@
 # GridWise — Smart Campus Energy Optimization Service
 
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)]()
-[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.14-blue.svg)]()
-[![License](https://img.shields.io/badge/license-MIT-green.svg)]()
+LLM-assisted HTTP API for the **BUP CSE Fest 2026 Hackathon (online preliminary)**. It receives a
+24-hour campus scenario (hourly demand, rooftop solar, grid tariff, battery limits) plus 1–3 natural-language
+operator notes, interprets the notes with a language model, validates the interpretation
+deterministically, solves a cost-minimizing linear program, replays the result against every energy
+and battery rule, and returns a verified 24-hour schedule.
 
-GridWise is an automated, LLM-assisted HTTP API service developed for the **BUP CSE Fest 2026 Hackathon (Online Preliminary Round)**. It ingests 24-hour campus energy demand, rooftop solar generation, fluctuating grid electricity tariffs, and battery storage constraints alongside 1–3 unstructured natural language operator notes. 
-
-The service deterministically extracts operational constraints, solves a cost-minimizing Linear Program (LP), verifies the schedule against strict physical and operational guardrails, and returns a verified 24-hour dispatch plan.
+Endpoints: `GET /health` · `POST /optimize-energy` (contract in §4). Team: Anadi (API, optimizer,
+validator, deployment), Turjo (LLM interpretation and guardrails), Samprity (operator console, docs).
 
 ---
 
@@ -20,9 +21,9 @@ The GridWise pipeline follows a strict, defense-in-depth architecture:
                         │
                         ▼
             ┌───────────────────────┐
-            │  Stage 1: LLM Engine  │  Groq LPU / OpenAI (gpt-4o-mini)
+            │  Stage 1: LLM Engine  │  OpenAI gpt-4o-mini / Groq (windows + typed values)
             └───────────┬───────────┘
-                        │ Raw JSON Directives
+                        │ Schema-constrained JSON
                         ▼
             ┌───────────────────────┐
             │ Stage 2: Guardrail    │  Enforces 0..23 hours, numeric bounds,
@@ -50,9 +51,9 @@ The GridWise pipeline follows a strict, defense-in-depth architecture:
 ### Core Pipeline Components
 1. **Stage 1 — LLM Semantic Interpreter**:
    - Parses natural language notes into structured directive types.
-   - Accurately converts colloquial time expressions (`"1 PM to 3 PM"` $\to$ `[13, 14]`, `"noon until 2 PM"` $\to$ `[12, 13]`, `"from 6 PM until 9 PM"` $\to$ `[18, 19, 20]`).
+   - Returns whole-hour windows (`"1 PM to 3 PM"` → start 13, end 15 exclusive) and a typed value; the `hours` array and kWh figures are derived in code, never by the model.
    - Normalizes reduction factors (e.g., an 80% reduction means `factor = 0.2` usable remaining solar).
-   - Computes percentage-based reserve requests relative to battery capacity.
+   - Flags percentage-based reserves (`reserve_percent_of_capacity`) so the guardrail converts them using the request's battery capacity.
    - Classifies irrelevant campus notices (menus, library hours, sports notices) as `no_op`.
 2. **Stage 2 — Deterministic Guardrails (`app/directives.py`)**:
    - Validates that every note receives exactly one interpretation in strict `note_index` order `0..N-1`.
@@ -64,226 +65,222 @@ The GridWise pipeline follows a strict, defense-in-depth architecture:
    - Formulates the 24-hour dispatch problem as a Linear Program solved via `scipy.optimize.linprog(method="highs")`.
    - Solves for hourly grid imports $g_h$, solar usage $s_h$, battery charging $c_h$, discharging $d_h$, and state-of-charge $e_h$.
    - Incorporates battery state transitions ($e_h = e_{h-1} + c_h - d_h$), rate limits, end-of-day neutrality ($e_{23} = e_{\text{init}}$), and hourly energy balance.
-   - Introduces a minor regularization term ($10^{-6}$) on battery cycling to strictly resolve degeneracy and prevent simultaneous charging and discharging.
+   - Collapses each hour to a single net battery action after solving and recomputes grid import from the rounded terms, so the energy balance is exact to the returned precision.
 4. **Stage 4 — Independent Replay Validator (`app/validator.py`)**:
    - Re-simulates the resulting plan hour-by-hour against ground-truth energy balance and active directives.
    - Asserts tolerance within $0.01\text{ kWh}$ / $0.01\text{ BDT}$.
 
 ---
 
-## 2. Model & Provider Configuration
 
-GridWise includes built-in multi-model failover for high availability and low latency:
+## 2. Language model: role, provider, guardrails
 
-| Provider | Supported Models | Primary Advantage |
+**Role.** The model is on the mandatory path: it reads `operator_notes` and produces the structured
+interpretation that the optimizer consumes. It is *only* asked to do language: for each note it returns
+a directive type, one or more whole-hour windows (`start_hour`, `end_hour_exclusive`) and a typed value
+(`usable_solar_fraction`, `reserve_kwh`, `reserve_percent_of_capacity`, `max_grid_kwh`, or `none`).
+Deterministic code (`app/directives.py`) expands windows into the `hours` array, converts a percentage
+reserve into kWh using the request's battery capacity, clamps and range-checks every number, and
+emits the exact `structured_adjustment` shape from the Problem Statement. Nothing the judge checks
+numerically is computed by the model.
+
+**Output is schema-constrained.** Requests use `response_format: json_schema` (strict) where the
+provider supports it and fall back to `json_object`; a malformed or truncated answer can therefore not
+reach the optimizer. Anything that still fails validation degrades *that note* to `no_op` — the service
+never invents a directive type and never returns 5xx because of model output.
+
+**Providers and latency.** OpenAI-compatible chat endpoints; the provider named by `LLM_PROVIDER` is tried
+first, the other configured one is the fallback. Each note is interpreted in its own concurrent request
+(notes are independent by specification), and every request is *hedged*: if an attempt is silent for
+`LLM_HEDGE_AFTER_S` (2.5 s) a second attempt starts in parallel and the first valid answer wins. One overall
+deadline (`LLM_TIMEOUT_S`, 20 s) bounds everything, so a slow provider can never push a request past the
+judge's 30 s limit.
+
+| `LLM_PROVIDER` | Model(s) | Notes |
 |---|---|---|
-| **Groq LPU** (Default) | `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b` | Sub-second inference latency ($< 100\text{ ms}$), achieving top marks on the $p95 \le 5\text{s}$ criterion. |
-| **OpenAI** (Fallback) | `gpt-4o-mini` | High rate-limit headroom ($10{,}000\text{ RPM}$) with native structured JSON mode. |
+| `openai` (**judging primary**) | `OPENAI_MODEL`, default **`gpt-4o-mini`** | 100 % on every measured run (below). Strict JSON schema mode. |
+| `groq` (**hedge / fallback**) | `GROQ_MODELS`, default `openai/gpt-oss-120b,openai/gpt-oss-20b,llama-3.3-70b-versatile` | gpt-oss-120b answers in 0.7–1.4 s but scored 44/45 on the paraphrase eval (read a "last month" maintenance note as today's) and returned HTTP 429 under four concurrent calls, so it backs OpenAI rather than leading. Tried in order; `reasoning_effort: low`. |
 
-The active provider can be configured via the `LLM_PROVIDER` environment variable (`groq` or `openai`). If a provider encounters a rate limit or connection issue, the system automatically falls over to the alternate provider and models.
+Configure **both** keys for judging: OpenAI answers first; if it is silent for 2.5 s or fails, the same
+note is re-asked on Groq in parallel and the first valid answer wins. Measured with both keys set,
+`LLM_PROVIDER=openai`: public cases 10/10 and 10/10 (p95 2.1 s), paraphrase eval 45/45 (p95 2.9 s),
+every note answered by the primary on its first attempt.
+
+**Measured with `gpt-4o-mini`** (this machine, one request per scenario, cache off):
+
+| Check | Result |
+|---|---|
+| 10 public sample cases through the live API (`scripts/run_public_cases.py --directives=live`), two runs | **10/10** and **10/10**, p95 1.8 s / 2.2 s |
+| 45-note paraphrase eval, 1 note per request (`scripts/run_eval.py`) | **45/45** exact on applies / type / hours / value, p95 2.0 s |
+| 45-note paraphrase eval, 3 notes per request, two shuffles (`--batch 3`) | **45/45** and **45/45**, p95 2.0 s / 3.9 s |
+
+Repeated scenarios (same notes and battery capacity) are served from an in-memory interpretation cache
+without a model call. Outages are never cached.
 
 ---
 
-## 3. Local Quickstart (Clean Environment)
+## 3. Local quickstart (clean environment)
 
-Follow these copy-paste instructions to run the service locally:
+Requires Python 3.12+ and one LLM API key. Node is only needed if you want to rebuild the operator console.
 
-### Step 1: Clone Repository
 ```bash
 git clone https://github.com/fairuz-anadi/gridWise.git
 cd gridWise
-```
 
-### Step 2: Configure Environment Variables
-Copy the example environment file and add your API keys:
-```bash
-cp .env.example .env
-```
-Edit `.env` and configure your keys:
-```env
-GROQ_API_KEY=your_groq_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
-LLM_PROVIDER=groq
-PORT=8000
-HOST=0.0.0.0
-```
-*(Never commit `.env` to version control; it is ignored in `.gitignore`)*
-
-### Step 3: Set Up Virtual Environment & Dependencies
-```bash
-# Create virtual environment with Python 3.11, 3.12, or 3.14
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
+python -m venv .venv
+# Windows: .venv\Scripts\activate      macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-```
 
-### Step 4: Run the API Service
-```bash
+cp .env.example .env         # then put ONE real key in .env (never commit it; it is gitignored)
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
-The API is now running and reachable at `http://0.0.0.0:8000`.
 
----
+`.env` is read at startup. Minimum content for judging:
 
-## 4. API Endpoints & Usage
-
-### 1. Readiness Probe: `GET /health`
-```bash
-curl -X GET http://localhost:8000/health
-```
-**Response (200 OK)**:
-```json
-{
-  "status": "ok"
-}
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=<your key>
 ```
 
-### 2. Main Optimization: `POST /optimize-energy`
+### Verify
+
 ```bash
-curl -X POST http://localhost:8000/optimize-energy \
+curl http://localhost:8000/health
+# {"status":"ok"}
+
+curl -s -X POST http://localhost:8000/optimize-energy \
   -H "Content-Type: application/json" \
-  -d '{
-    "scenario_id": "SAMPLE-01",
-    "operator_notes": [
-      "Facilities will wash the rooftop solar panels from noon until 2 PM. During cleaning, usable solar should be treated as roughly 25% of the forecast.",
-      "The sports office moved next months registration deadline."
-    ],
-    "hours": [
-      {"hour": 0, "demand_kwh": 90, "solar_kwh": 0, "tariff_bdt_per_kwh": 6},
-      {"hour": 1, "demand_kwh": 85, "solar_kwh": 0, "tariff_bdt_per_kwh": 6},
-      {"hour": 2, "demand_kwh": 80, "solar_kwh": 0, "tariff_bdt_per_kwh": 5},
-      {"hour": 3, "demand_kwh": 80, "solar_kwh": 0, "tariff_bdt_per_kwh": 5},
-      {"hour": 4, "demand_kwh": 85, "solar_kwh": 0, "tariff_bdt_per_kwh": 5},
-      {"hour": 5, "demand_kwh": 95, "solar_kwh": 0, "tariff_bdt_per_kwh": 6},
-      {"hour": 6, "demand_kwh": 110, "solar_kwh": 5, "tariff_bdt_per_kwh": 8},
-      {"hour": 7, "demand_kwh": 130, "solar_kwh": 20, "tariff_bdt_per_kwh": 10},
-      {"hour": 8, "demand_kwh": 150, "solar_kwh": 50, "tariff_bdt_per_kwh": 12},
-      {"hour": 9, "demand_kwh": 165, "solar_kwh": 90, "tariff_bdt_per_kwh": 14},
-      {"hour": 10, "demand_kwh": 175, "solar_kwh": 130, "tariff_bdt_per_kwh": 16},
-      {"hour": 11, "demand_kwh": 180, "solar_kwh": 160, "tariff_bdt_per_kwh": 16},
-      {"hour": 12, "demand_kwh": 185, "solar_kwh": 180, "tariff_bdt_per_kwh": 15},
-      {"hour": 13, "demand_kwh": 180, "solar_kwh": 170, "tariff_bdt_per_kwh": 14},
-      {"hour": 14, "demand_kwh": 170, "solar_kwh": 140, "tariff_bdt_per_kwh": 13},
-      {"hour": 15, "demand_kwh": 165, "solar_kwh": 90, "tariff_bdt_per_kwh": 14},
-      {"hour": 16, "demand_kwh": 170, "solar_kwh": 45, "tariff_bdt_per_kwh": 18},
-      {"hour": 17, "demand_kwh": 185, "solar_kwh": 10, "tariff_bdt_per_kwh": 22},
-      {"hour": 18, "demand_kwh": 205, "solar_kwh": 0, "tariff_bdt_per_kwh": 28},
-      {"hour": 19, "demand_kwh": 215, "solar_kwh": 0, "tariff_bdt_per_kwh": 30},
-      {"hour": 20, "demand_kwh": 205, "solar_kwh": 0, "tariff_bdt_per_kwh": 26},
-      {"hour": 21, "demand_kwh": 175, "solar_kwh": 0, "tariff_bdt_per_kwh": 18},
-      {"hour": 22, "demand_kwh": 135, "solar_kwh": 0, "tariff_bdt_per_kwh": 10},
-      {"hour": 23, "demand_kwh": 105, "solar_kwh": 0, "tariff_bdt_per_kwh": 7}
-    ],
-    "battery": {
-      "capacity_kwh": 220,
-      "initial_energy_kwh": 110,
-      "minimum_energy_kwh": 40,
-      "max_charge_kwh_per_hour": 50,
-      "max_discharge_kwh_per_hour": 50
-    }
-  }'
+  --data @examples/sample-06.request.json
 ```
 
-**Expected Response**:
-```json
-{
-  "scenario_id": "SAMPLE-01",
-  "directive_interpretation": [
-    {
-      "note_index": 0,
-      "applies": true,
-      "directive_type": "solar_reduction",
-      "structured_adjustment": {
-        "hours": [12, 13],
-        "factor": 0.25
-      },
-      "explanation": "Solar output is reduced to 25% of forecast while panels are cleaned from noon to 2 PM."
-    },
-    {
-      "note_index": 1,
-      "applies": false,
-      "directive_type": "no_op",
-      "structured_adjustment": null,
-      "explanation": "The note about sports office registration deadline does not affect today's energy schedule."
-    }
-  ],
-  "hourly_plan": [ ... 24 entries ... ],
-  "total_grid_kwh": 2692.5,
-  "total_cost_bdt": 38365.0,
-  "peak_grid_kwh": 175.0,
-  "plan_summary": "Scheduled 24-hour campus energy plan with active directives: solar_reduction. Total grid import: 2692.50 kWh, peak grid: 175.00 kWh, total cost: 38365.00 BDT."
-}
+Expected: HTTP 200 with three `directive_interpretation` entries —
+`solar_reduction {hours:[10,11], factor:0.5}`, `no_charge_window {hours:[14,15]}`, `no_op` —
+and `total_cost_bdt` **34090.0**. The organizers' reference output is in
+`examples/sample-06.expected.json` (equivalent optimal schedules are accepted; the cost and the
+interpretation are what to compare).
+
+### Run all ten public sample cases against the running server
+
+```bash
+python scripts/run_public_cases.py --url http://localhost:8000
 ```
+
+Expected last line: `10/10 passed, p95 <n> ms`. Each case is checked for HTTP 200, `scenario_id` echo,
+interpretation equal to the reference (hours exact, numbers within 0.01), an independent replay of every
+energy/battery rule against the *reference* directives (what the judge does), and cost equal to the
+reference optimum within 0.01 BDT.
+
+Other useful modes:
+
+```bash
+python scripts/run_public_cases.py --directives=reference   # optimizer + validator only, no model call
+python scripts/run_eval.py --batch 3                        # paraphrase robustness eval (needs a key)
+pytest -q                                                   # 91 offline tests (no key needed)
+```
+
+The operator console is served at `http://localhost:8000/` when `frontend/dist` exists (the Docker
+image builds it; locally run `cd frontend && npm ci && npm run build`). It is not part of the judged
+API — see `frontend/README.md`.
 
 ---
 
-## 5. Docker Fallback Deployment
+## 4. API contract
 
-A production-ready `Dockerfile` is provided that binds to `0.0.0.0:8000` and runs under an unprivileged user.
+`GET /health` → `200 {"status": "ok"}` (ready within ~1 s of process start).
 
-### Build the Image
+`POST /optimize-energy` accepts the Problem Statement §07 request and returns the §10 response,
+field names exact. Status codes: **200** success · **400** malformed JSON or structurally invalid request
+(`{"error": "invalid_request", "detail": [{"loc": [...], "msg": "..."}]}`) · **500** controlled internal
+error (`{"error": "internal_error", "request_id": "..."}`, no stack trace, no secrets).
+
+Request validation (all → 400): exactly 24 unique hours 0–23; 1–3 non-empty notes; all numbers finite
+and ≥ 0; `minimum_energy_kwh ≤ initial_energy_kwh ≤ capacity_kwh` (otherwise no schedule can exist).
+
+Pipeline per request: interpret notes (LLM → guardrails) → LP with directives applied → replay check
+→ if the hard problem is infeasible or the replay fails, re-solve with directive constraints as soft
+penalties while every base GridWise rule stays hard → replay check again → respond. The final plan
+always satisfies energy balance, effective solar, battery bounds/rates and end-of-day neutrality.
+
+---
+
+## 5. Docker fallback
+
+The image builds the console (Node stage) and the API (Python 3.12 slim), runs as a non-root user,
+binds `0.0.0.0` on `$PORT` (default 8000) and contains no secrets — keys are passed at run time.
+
 ```bash
+# Build locally
 docker build -t gridwise:latest .
+
+# Run (keys from your local .env, which is never copied into the image)
+docker run --rm -p 8000:8000 --env-file .env gridwise:latest
+
+curl http://localhost:8000/health
 ```
 
-### Run the Container
-Pass environment variables into the container without baking secrets into the image:
+**Registry image (submission):** `<registry>/<owner>/gridwise@sha256:<digest>` — filled in on the
+submission form. Pull and run:
+
 ```bash
-docker run -d \
-  --name gridwise-service \
-  -p 8000:8000 \
-  --env-file .env \
-  gridwise:latest
+docker pull <registry>/<owner>/gridwise@sha256:<digest>
+docker run --rm -p 8000:8000 -e LLM_PROVIDER=openai -e OPENAI_API_KEY=<key> <registry>/<owner>/gridwise@sha256:<digest>
 ```
 
-### Verify Container Health
+---
+
+## 6. Environment variables
+
+| Variable | Required | Default | Meaning |
+|---|---|---|---|
+| `OPENAI_API_KEY` | one of the two keys | — | OpenAI key |
+| `GROQ_API_KEY` | one of the two keys | — | Groq key |
+| `LLM_PROVIDER` | no | `groq` | Which configured provider to try first (`openai` or `groq`); the other is the fallback |
+| `OPENAI_MODEL` | no | `gpt-4o-mini` | OpenAI model id |
+| `GROQ_MODELS` | no | `openai/gpt-oss-120b,openai/gpt-oss-20b,llama-3.3-70b-versatile` | Groq models, tried in order |
+| `LLM_TIMEOUT_S` | no | `20` | Overall deadline for the whole provider chain per request |
+| `LLM_ATTEMPT_TIMEOUT_S` | no | `12` | Deadline for a single model call |
+| `LLM_HEDGE_AFTER_S` | no | `2.5` | Start a parallel second attempt if the first is silent this long |
+| `LLM_CACHE` | no | `1` | `0` disables the interpretation cache (used by the eval script) |
+| `PORT` | no | `8000` | Listening port (hosting platforms inject it) |
+
+Secret handling: keys are read from the environment or a local `.env`; `.env*` is gitignored and
+dockerignored; error responses and logs never include request bodies, model prompts or key material.
+
+---
+
+## 7. Tests
+
 ```bash
-curl -X GET http://localhost:8000/health
+pytest -q
 ```
 
----
-
-## 6. Running Tests
-
-Run the complete test suite containing API unit tests, schema validation, and public case replays:
-```bash
-pytest tests/ -v
-```
-
-This verifies:
-- `GET /health` returns HTTP 200 `{"status": "ok"}`
-- Invalid requests (e.g. non-24 hours, malformed JSON, out-of-bounds battery values) return HTTP 400
-- All 10 public reference scenarios solve to exact optimal costs within $0.01\text{ BDT}$
-- Replay validator checks 100% of energy balance, battery rate limits, bounds, and end-of-day neutrality
+91 tests, no network: request validation and status codes (`tests/test_api.py`), the LP against all ten
+reference optima and directive application (`tests/test_optimizer.py`), the replay validator catching
+each rule violation (`tests/test_validator.py`), and the guardrail layer against every malformed model
+output shape — bad hours, midnight-crossing windows, NaN/∞, unknown types, missing or duplicate
+indices, provider outage, cache behaviour (`tests/test_guardrails.py`).
 
 ---
 
-## 7. Environment Variables Reference
+## 8. Dependencies and credits
 
-| Variable | Description | Required | Default | Example |
-|---|---|---|---|---|
-| `GROQ_API_KEY` | API Key for Groq LPU inference | Yes (if using Groq) | None | `gsk_...` |
-| `OPENAI_API_KEY` | API Key for OpenAI inference | Yes (if using OpenAI) | None | `sk-proj-...` |
-| `LLM_PROVIDER` | Preferred LLM provider (`groq` or `openai`) | No | `groq` | `groq` |
-| `PORT` | Service listening port | No | `8000` | `8000` |
-| `HOST` | Network interface binding | No | `0.0.0.0` | `0.0.0.0` |
-
----
-
-## 8. Dependencies & Credits
-
-- **FastAPI** (`0.141.1`) & **Uvicorn** (`0.53.0`): High-performance async ASGI web framework.
-- **Pydantic** (`2.13.5`): Schema validation and JSON serialization.
-- **SciPy** (`1.18.1`): `scipy.optimize.linprog` with the HiGHS simplex/interior-point solver.
-- **NumPy** (`2.5.3`): Numerical array operations for constraint matrices.
-- **HTTPX** (`0.28.1`): Asynchronous HTTP client for LLM communication.
-- **Pytest** (`9.1.1`): Automated test harness.
+Runtime: FastAPI 0.141, Uvicorn 0.53, Pydantic 2.13, SciPy 1.18 (`linprog`, HiGHS), NumPy 2.5,
+httpx 0.28, python-dotenv. Tests: pytest, pytest-asyncio. Console: React 19, TypeScript, Vite 8,
+Recharts 3. Language models: OpenAI `gpt-4o-mini` (judging) with Groq gpt-oss / Llama as fallback.
+Public sample cases © BUP CSE Fest 2026 organizers, used unchanged as test fixtures.
+AI coding assistants (Claude Code) were used during development; the architecture, guardrail rules,
+optimizer formulation and tests are the team's own work.
 
 ---
 
-## 9. Known Limitations & Safe Operation
+## 9. Known limitations
 
-- **Infeasible Scenarios**: If contradictory hard physical constraints are submitted (e.g., zero grid allowed with demand exceeding solar and battery limits combined), the optimizer raises `Infeasible`, which the API handles gracefully by returning an HTTP 422 with diagnostic details.
-- **Secret Safety**: Secrets and raw tracebacks are never exposed in log outputs or HTTP error responses.
+- The model can still misread a genuinely ambiguous note; the guardrails guarantee a *valid* plan in
+  that case, not a *correct* interpretation. The eval set (`tests/eval/paraphrases.json`) is how we
+  measure this — extend it when adding phrasing.
+- If both providers are unreachable, every note degrades to `no_op` (explanation names the interpreter)
+  and the plan is optimized under base rules only. The response is still 200 and valid.
+- Overlapping `solar_reduction` notes multiply (never use more solar than any single note allows).
+  Overlapping reserve / grid-cap notes take the stricter value.
+- Notes with no time reference that clearly apply all day are interpreted as hours 0–23.
+- The interpretation cache is per process and not shared across replicas.
