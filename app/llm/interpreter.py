@@ -77,6 +77,7 @@ DIRECTIVE TYPES (choose exactly one per note):
   value_kind = "usable_solar_fraction", value = the FRACTION OF NORMAL OUTPUT THAT REMAINS, 0..1.
     "drops to about 20%" / "one-fifth of normal" / "roughly a quarter" -> 0.2 / 0.2 / 0.25
     "an 80% reduction" / "cut by 80%" / "loses 80%" -> 0.2   (reduction BY x means 1 - x remains)
+    "cut by three quarters" -> 0.25
     "about half" -> 0.5
 - minimum_battery_reserve: keep at least some energy stored in the battery for some hours.
   value_kind = "reserve_kwh" with value in kWh, OR "reserve_percent_of_capacity" with value in percent (0..100)
@@ -88,10 +89,14 @@ DIRECTIVE TYPES (choose exactly one per note):
   value_kind = "none", value = 0.
   Direction test: charging = energy INTO the battery; discharging = energy OUT OF the battery to the campus.
 - max_grid_window: grid import / intake / draw / feeder / transformer / substation limit for some hours.
-  value_kind = "max_grid_kwh", value = the cap per hour in kWh (a cap given in kW for one hour is the same number).
+  value_kind = "max_grid_kwh", value = the cap per hour in kWh.
+    If given in kW for one hour (e.g. "140 kW", "150 kW") or unit is omitted (e.g. "no more than 150", "cap intake at 160"),
+    value is that number.
 - no_op: the note does not change TODAY's demand, solar, battery or grid rules. This includes campus notices
-  (menus, deadlines, bookings, library hours, sports), and ALSO energy-related notes about another day
-  ("next week", "tomorrow night", "last month"). value_kind = "none", value = 0, windows = [].
+  (menus, deadlines, bookings, library hours, sports), and ALSO ANY energy-related notes about another day
+  ("tomorrow", "tomorrow morning", "tomorrow night", "next week", "next Tuesday", "yesterday", "last month").
+  Energy directives for tomorrow or other days MUST be classified as no_op since today's schedule is unaffected.
+  value_kind = "none", value = 0, windows = [].
 
 TIME WINDOWS: whole hours, 24-hour clock. start_hour is INCLUDED, end_hour_exclusive is EXCLUDED.
   midnight = 0, noon = 12, 1 PM = 13, 11 PM = 23; "until midnight" or "to the end of the day" -> end_hour_exclusive = 24.
@@ -99,6 +104,11 @@ TIME WINDOWS: whole hours, 24-hour clock. start_hour is INCLUDED, end_hour_exclu
   "between 13:00 and 15:00" -> {13, 15}       "6 PM until 9 PM" -> {18, 21}       "10 AM until noon" -> {10, 12}
   "from one until three in the afternoon" -> {13, 15}       "all day" -> {0, 24}
   "10 PM to 2 AM" (crosses midnight) -> {start_hour: 22, end_hour_exclusive: 2}
+  "dusk" or "sunset" -> 18:00 (hour 18). E.g. "from dusk until 9 PM" -> {start_hour: 18, end_hour_exclusive: 21}
+  "dawn" or "sunrise" -> 06:00 (hour 6). E.g. "from dawn until 10 AM" -> {start_hour: 6, end_hour_exclusive: 10}
+  Partial/colloquial hours: expand to cover the whole affected 1-hour slots.
+    "quarter to 2 PM until 4 PM" (1:45 PM - 4:00 PM) touches hour 13, so {start_hour: 13, end_hour_exclusive: 16}
+    "quarter past 5 PM until 8 PM" touches hour 17, so {start_hour: 17, end_hour_exclusive: 20}
   A note with two separate periods gets two windows. Notes with no time reference that clearly apply all day -> {0, 24}.
 
 RULES: one directive per note; never invent a type outside the list; if a note is ambiguous between an energy
