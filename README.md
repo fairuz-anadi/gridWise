@@ -6,6 +6,10 @@ operator notes, interprets the notes with a language model, validates the interp
 deterministically, solves a cost-minimizing linear program, replays the result against every energy
 and battery rule, and returns a verified 24-hour schedule.
 
+**Live deployment:** https://gridwise-hampton.onrender.com
+(`GET https://gridwise-hampton.onrender.com/health` · `POST https://gridwise-hampton.onrender.com/optimize-energy`;
+the operator console is at the root URL).
+
 Endpoints: `GET /health` · `POST /optimize-energy` (contract in §4). Team: Anadi (API, optimizer,
 validator, deployment), Turjo (LLM interpretation and guardrails), Samprity (operator console, docs).
 
@@ -218,12 +222,12 @@ docker run --rm -p 8000:8000 --env-file .env gridwise:latest
 curl http://localhost:8000/health
 ```
 
-**Registry image (submission):** `<registry>/<owner>/gridwise@sha256:<digest>` — filled in on the
-submission form. Pull and run:
+**Registry image (submission):** public on GitHub Container Registry, no login needed. Exposed port: 8000.
 
 ```bash
-docker pull <registry>/<owner>/gridwise@sha256:<digest>
-docker run --rm -p 8000:8000 -e LLM_PROVIDER=openai -e OPENAI_API_KEY=<key> <registry>/<owner>/gridwise@sha256:<digest>
+docker pull ghcr.io/fairuz-anadi/gridwise@sha256:d03732b87e6f604ac7ddd5f132b07ea13db0e3083394cb2e8b15d5117b8d9418
+docker run --rm -p 8000:8000 -e LLM_PROVIDER=openai -e OPENAI_API_KEY=<key> ghcr.io/fairuz-anadi/gridwise@sha256:d03732b87e6f604ac7ddd5f132b07ea13db0e3083394cb2e8b15d5117b8d9418
+curl http://localhost:8000/health
 ```
 
 ---
