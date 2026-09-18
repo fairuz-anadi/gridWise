@@ -1,4 +1,4 @@
-"""LP scheduler. Owner: Anadi.
+"""LP scheduler for GridWise smart campus energy optimization.
 
 Variables (all >= 0), h = 0..23:  g[h] grid, s[h] solar_used, c[h] charge, d[h] discharge  -> 96 vars
 Objective:    minimise sum tariff[h] * g[h]

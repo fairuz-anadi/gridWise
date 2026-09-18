@@ -1,4 +1,4 @@
-"""Replay checker: re-applies every Problem Statement §11 rule to a finished plan. Owner: Anadi.
+"""Replay checker: verifies all Problem Statement §09 and §11 rules against a finished plan.
 
 Runs on every response before it leaves the server, and doubles as the test oracle.
 """
