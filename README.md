@@ -68,6 +68,39 @@ flowchart TD
 
 ## System Architecture
 
+```mermaid
+flowchart TB
+    CLIENT["Judge harness / operator console"] -->|"POST /optimize-energy"| API
+
+    subgraph SVC["GridWise service: one Docker container, FastAPI + Uvicorn on 0.0.0.0:$PORT"]
+        API["API layer<br/>app/main.py + app/schemas.py<br/>Pydantic validation, 400 / controlled 500"]
+        GR["Guardrails<br/>app/directives.py<br/>hours 0-23, numeric bounds, no_op fallback"]
+        CACHE[("Interpretation cache<br/>in-memory LRU")]
+        LLM["LLM interpreter<br/>app/llm/interpreter.py<br/>one request per note, hedged, 20 s deadline"]
+        OPT["LP optimizer<br/>app/optimizer.py<br/>SciPy HiGHS, 96 variables"]
+        SOFT["Soft re-solve<br/>directive limits become penalties,<br/>base GridWise rules stay hard"]
+        VAL["Replay validator<br/>app/validator.py<br/>every Problem Statement section 11 check"]
+        UI["Operator console<br/>React build served at /"]
+    end
+
+    OAI["OpenAI gpt-4o-mini<br/>primary"]
+    GROQ["Groq gpt-oss / Llama<br/>hedge and fallback"]
+
+    API --> GR
+    GR --> CACHE
+    GR --> LLM
+    LLM --> OAI
+    LLM -.->|"primary silent or failing"| GROQ
+    GR -->|"validated directives"| OPT
+    OPT --> VAL
+    OPT -.->|"infeasible"| SOFT
+    VAL -.->|"violations"| SOFT
+    SOFT --> VAL
+    VAL -->|"verified plan"| API
+    API -->|"200 JSON"| CLIENT
+    CLIENT -.->|"GET /"| UI
+```
+
 GridWise is organized into five decoupled, testable layers:
 
 ### 1. API Layer (`app/main.py`)
@@ -233,8 +266,9 @@ The solver runs using `scipy.optimize.linprog(method="highs")`. Following the so
 | `PORT` | no | `8000` | Listening port (hosting platforms inject it) |
 
 **Judging configuration:** `LLM_PROVIDER=openai` with **both** `OPENAI_API_KEY` and `GROQ_API_KEY` set —
-OpenAI answers first, Groq is the automatic hedge/fallback. This is the configuration of the live deployment
-and of every measurement quoted in this document.
+OpenAI answers first, Groq is the automatic hedge/fallback. The live deployment additionally sets
+`LLM_HEDGE_AFTER_S=5`, so Groq is only raced when OpenAI has been silent for 5 s (OpenAI answers nearly
+every note well inside that); typical end-to-end latency stays around 2 s.
 
 **Secret handling:** keys come only from the environment or a local `.env`. `.env` is gitignored and
 dockerignored, so it is never committed or baked into the image; pass keys to Docker with `-e` or `--env-file`.
@@ -381,10 +415,13 @@ gridWise/
 │   ├── test_guardrails.py      # Guardrail unit tests & malformed model recovery
 │   ├── test_optimizer.py       # LP correctness against reference solutions
 │   ├── test_validator.py       # Replay validation engine tests
+│   ├── test_fuzz.py            # Randomised robustness (1,000 scenarios, 150 API requests)
+│   ├── conftest.py             # Shared fixtures (public cases)
 │   ├── fixtures/               # Public scenario test data
 │   └── eval/                   # Paraphrase benchmark definitions (64 cases)
 ├── .env.example                # Template for environment configuration
 ├── Dockerfile                  # Multi-stage production container build
+├── .dockerignore               # Keeps .env, .venv and local builds out of the image
 ├── pytest.ini                  # Pytest test suite configuration
 ├── requirements.txt            # Python dependencies
 └── README.md                   # Project documentation
@@ -533,11 +570,33 @@ python scripts/run_eval.py --url https://gridwise-hampton.onrender.com --batch 3
 
 ## Deployment
 
-The service is configured for zero-downtime deployment on containerized hosting platforms (e.g., Render, Railway, AWS ECS):
+```mermaid
+flowchart LR
+    GH["GitHub repository<br/>fairuz-anadi/gridWise"] -->|"push to main: auto-deploy"| RENDER["Render web service<br/>Docker build of this repo<br/>health check path /health"]
+    GH -->|"docker build + push"| GHCR["GitHub Container Registry<br/>public image, pinned by digest"]
+    CRON["cron-job.org<br/>GET /health every 5 min"] -->|"keeps the instance awake"| RENDER
+    JUDGE["Judge"] -->|"https://gridwise-hampton.onrender.com"| RENDER
+    JUDGE -.->|"fallback: docker pull + run"| GHCR
+```
+
 - **Live Deployment**: [https://gridwise-hampton.onrender.com](https://gridwise-hampton.onrender.com)
-- Root `/`: Interactive Operator Dashboard
-- `/health`: Liveness probe for load balancers
-- `/optimize-energy`: High-performance JSON API
+  - Root `/`: interactive operator console
+  - `/health`: readiness probe (`{"status":"ok"}`)
+  - `/optimize-energy`: the judged JSON API
+- **Hosting**: Render web service built from this repository's `Dockerfile`; every push to `main` redeploys
+  automatically, and Render's health check uses `/health`. The platform injects `PORT`; the container binds `0.0.0.0`.
+- **Secrets**: `OPENAI_API_KEY`, `GROQ_API_KEY`, `LLM_PROVIDER=openai` and `LLM_HEDGE_AFTER_S=5` are set as
+  Render environment variables, never in the repository or the image.
+- **Keep-alive**: Render's free plan puts an idle service to sleep after 15 minutes, and waking it can take close
+  to a minute. A free [cron-job.org](https://cron-job.org) job requests `GET /health` every 5 minutes, so the
+  service stays warm and `/health` answers in well under a second whenever the judge calls it.
+- **Fallback image**: the same build is published as a public GHCR image pinned by digest
+  (see [Public Container Registry](#public-container-registry)); it runs anywhere with `docker run` if the live
+  endpoint is unavailable.
+
+**Live verification** (against the deployed URL, with the commands in [Testing & Evaluation](#testing--evaluation)):
+public cases 10/10 with exact reference costs; paraphrase eval 64/64 exact, p95 about 2 s; six concurrent uncached
+requests all 200 and correct; malformed JSON returns 400; `/health` about 0.2 s.
 
 ---
 
