@@ -28,6 +28,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 from app.directives import interpret_and_validate
 from app.optimizer import Infeasible, optimize
@@ -61,14 +62,20 @@ async def _internal_error(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=500, content={"error": "internal_error", "request_id": request_id})
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health() -> dict:
     """Readiness probe for the judging harness."""
     return {"status": "ok"}
 
 
 @app.post("/optimize-energy", response_model=OptimizeResponse)
-async def optimize_energy(scenario: Scenario) -> OptimizeResponse:
+async def optimize_energy(request: Request) -> OptimizeResponse:
+    # Parse the body as JSON whatever Content-Type the client sends (none, text/plain, curl -d's form
+    # default); FastAPI's own body binding would reject those with 400 even when the JSON is valid.
+    try:
+        scenario = Scenario.model_validate_json(await request.body())
+    except ValidationError as e:
+        raise RequestValidationError(e.errors(include_url=False, include_context=False))
     start = time.perf_counter()
     directives = await interpret_and_validate(scenario.operator_notes, scenario.battery)
     llm_ms = (time.perf_counter() - start) * 1000

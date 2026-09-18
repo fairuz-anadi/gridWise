@@ -1,5 +1,6 @@
 """API contract: endpoint names, status codes, response shape."""
 import copy
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -64,3 +65,19 @@ def test_internal_error_is_controlled(monkeypatch):
     r = client.post("/optimize-energy", json=VALID)
     assert r.status_code == 500
     assert "sk-ant" not in r.text and set(r.json()) == {"error", "request_id"}
+
+
+@pytest.mark.parametrize("content_type", [None, "text/plain", "application/x-www-form-urlencoded",
+                                          "application/json; charset=utf-8"])
+def test_json_body_accepted_whatever_the_content_type(content_type):
+    headers = {"content-type": content_type} if content_type else {}
+    r = client.post("/optimize-energy", content=json.dumps(VALID).encode(), headers=headers)
+    assert r.status_code == 200
+
+
+def test_empty_body_is_400():
+    assert client.post("/optimize-energy", content=b"").status_code == 400
+
+
+def test_health_answers_head():
+    assert client.head("/health").status_code == 200
