@@ -217,6 +217,25 @@ The solver runs using `scipy.optimize.linprog(method="highs")`. Following the so
 - **Overall Request Deadline**: Bounded by `LLM_TIMEOUT_S` (default $20\text{ s}$).
 - **In-Memory Cache**: Repeated notes within identical battery setups are served instantly from an LRU interpretation cache (`LLM_CACHE=1`).
 
+### Environment Variables
+
+| Variable | Required | Default | Meaning |
+|---|---|---|---|
+| `OPENAI_API_KEY` | one of the two keys | — | OpenAI key |
+| `GROQ_API_KEY` | one of the two keys | — | Groq key |
+| `LLM_PROVIDER` | no | `groq` | Provider tried first (`openai` or `groq`); the other configured one is the fallback |
+| `OPENAI_MODEL` | no | `gpt-4o-mini` | OpenAI model id |
+| `GROQ_MODELS` | no | `openai/gpt-oss-120b,openai/gpt-oss-20b,llama-3.3-70b-versatile` | Groq models, tried in order |
+| `LLM_TIMEOUT_S` | no | `20` | Overall deadline for the whole provider chain per request |
+| `LLM_ATTEMPT_TIMEOUT_S` | no | `12` | Deadline for a single model call |
+| `LLM_HEDGE_AFTER_S` | no | `2.5` | Start a parallel second attempt if the first is silent this long |
+| `LLM_CACHE` | no | `1` | `0` disables the interpretation cache |
+| `PORT` | no | `8000` | Listening port (hosting platforms inject it) |
+
+**Secret handling:** keys come only from the environment or a local `.env`. `.env` is gitignored and
+dockerignored, so it is never committed or baked into the image; pass keys to Docker with `-e` or `--env-file`.
+Never put real key values in the README, issues, or screenshots.
+
 ---
 
 ## API Reference
@@ -411,6 +430,24 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - API Health Check: `http://localhost:8000/health`
 - Operator Console: `http://localhost:8000/` *(served when `frontend/dist` is built)*
 
+### 4. Verify (health + one public sample)
+```bash
+curl http://localhost:8000/health
+# {"status":"ok"}
+
+curl -s -X POST http://localhost:8000/optimize-energy \
+  -H "Content-Type: application/json" \
+  --data @examples/sample-06.request.json
+```
+Expected: HTTP 200 with three `directive_interpretation` entries —
+`solar_reduction {hours:[10,11], factor:0.5}`, `no_charge_window {hours:[14,15]}`, `no_op` —
+and `total_cost_bdt` **34090.0**. The organizers' reference output is in `examples/sample-06.expected.json`
+(equivalent optimal schedules are accepted; compare the interpretation and the cost).
+
+Without an API key in `.env` the service still starts and answers 200, but every note comes back as
+`no_op` ("Interpreter unavailable") and the cost is **31630.0** (no directives applied). That is the
+designed safe failure, not a bug; add a key and restart to get the result above.
+
 ---
 
 ## Docker Deployment
@@ -517,6 +554,12 @@ GridWise was originally developed for the **BUP CSE Fest 2026 Software & AI Hack
 - **FastAPI & Pydantic**: Asynchronous backend and strict data contract enforcement.
 - **OpenAI & Groq**: Language models powering structured semantic extraction.
 - **React & Recharts**: Interactive campus telemetry and dispatch schedule visualization.
+- **Dependencies** (pinned in `requirements.txt` / `frontend/package-lock.json`): FastAPI 0.141, Uvicorn 0.53,
+  Pydantic 2.13, SciPy 1.18 (HiGHS), NumPy 2.5, httpx 0.28, python-dotenv 1.2; tests: pytest, pytest-asyncio;
+  console: React 19, TypeScript, Vite 8, Recharts 3.
+- **Public sample cases** © BUP CSE Fest 2026 organizers, used unchanged as test fixtures (`tests/fixtures/public_cases.json`).
+- **AI coding assistants** (e.g. Claude Code) were used during development; the architecture, guardrail rules,
+  optimizer formulation and tests are the team's own work.
 
 ---
 
