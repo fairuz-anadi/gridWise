@@ -1,0 +1,60 @@
+{
+  "_meta": {
+    "purpose": "Paraphrase-robustness eval for the operator-note interpreter. Wording here deliberately differs from the public sample pack. Ground truth follows the Problem Statement: hours start-inclusive/end-exclusive, factor = usable fraction remaining, reserve in kWh (percent of the given capacity converted), max_grid in kWh per hour.",
+    "battery_capacity_kwh": 200,
+    "fields_scored": ["applies", "directive_type", "hours", "value"]
+  },
+  "cases": [
+    {"id": "sr-01", "note": "PV production will drop to about 20% between 13:00 and 15:00.", "directive_type": "solar_reduction", "hours": [13, 14], "factor": 0.2},
+    {"id": "sr-02", "note": "Panel washing from one until three will leave roughly one-fifth of normal solar output.", "directive_type": "solar_reduction", "hours": [13, 14], "factor": 0.2},
+    {"id": "sr-03", "note": "Expect an 80% reduction in rooftop solar during the 1-3 PM maintenance window.", "directive_type": "solar_reduction", "hours": [13, 14], "factor": 0.2},
+    {"id": "sr-04", "note": "Heavy cloud is forecast; count on only half the usual solar from 9 AM to noon.", "directive_type": "solar_reduction", "hours": [9, 10, 11], "factor": 0.5},
+    {"id": "sr-05", "note": "Inverter firmware work cuts usable solar by 30% from 11 AM until 2 PM.", "directive_type": "solar_reduction", "hours": [11, 12, 13], "factor": 0.7},
+    {"id": "sr-06", "note": "Shading from the crane means roughly a quarter of forecast solar between 2 PM and 5 PM.", "directive_type": "solar_reduction", "hours": [14, 15, 16], "factor": 0.25},
+    {"id": "sr-07", "note": "Rooftop array offline for cleaning 10:00-12:00; assume zero solar in that slot.", "directive_type": "solar_reduction", "hours": [10, 11], "factor": 0.0},
+    {"id": "sr-08", "note": "Solar will be running at 60 percent of forecast from 8 AM to 10 AM while the string is re-terminated.", "directive_type": "solar_reduction", "hours": [8, 9], "factor": 0.6},
+
+    {"id": "res-01", "note": "Keep at least 120 kWh in reserve from 6 PM until 9 PM.", "directive_type": "minimum_battery_reserve", "hours": [18, 19, 20], "minimum_energy_kwh": 120},
+    {"id": "res-02", "note": "Hold no less than 40% of battery capacity between 17:00 and 21:00 for the exam-hall backup.", "directive_type": "minimum_battery_reserve", "hours": [17, 18, 19, 20], "minimum_energy_kwh": 80},
+    {"id": "res-03", "note": "The server room needs a minimum of 90 kWh stored from 7 PM to 10 PM.", "directive_type": "minimum_battery_reserve", "hours": [19, 20, 21], "minimum_energy_kwh": 90},
+    {"id": "res-04", "note": "Do not let the battery fall below 60 kWh at any point between 8 PM and 11 PM.", "directive_type": "minimum_battery_reserve", "hours": [20, 21, 22], "minimum_energy_kwh": 60},
+    {"id": "res-05", "note": "Maintain half the battery capacity in reserve from noon until 2 PM during the drill.", "directive_type": "minimum_battery_reserve", "hours": [12, 13], "minimum_energy_kwh": 100},
+    {"id": "res-06", "note": "Emergency ops want the battery kept at 75% or higher from 18:00 to 20:00.", "directive_type": "minimum_battery_reserve", "hours": [18, 19], "minimum_energy_kwh": 150},
+
+    {"id": "nc-01", "note": "Do not charge the battery between 2 PM and 4 PM.", "directive_type": "no_charge_window", "hours": [14, 15]},
+    {"id": "nc-02", "note": "The charger is isolated for electrical work from 02:00 until 05:00.", "directive_type": "no_charge_window", "hours": [2, 3, 4]},
+    {"id": "nc-03", "note": "Charging is off-limits from 11 AM until 1 PM while technicians inspect the rectifier.", "directive_type": "no_charge_window", "hours": [11, 12]},
+    {"id": "nc-04", "note": "No battery charging overnight from 10 PM to 2 AM because of cable replacement.", "directive_type": "no_charge_window", "hours": [0, 1, 22, 23]},
+    {"id": "nc-05", "note": "Battery intake is disabled from three until six in the afternoon.", "directive_type": "no_charge_window", "hours": [15, 16, 17]},
+    {"id": "nc-06", "note": "Charging circuit unavailable 9-11 AM.", "directive_type": "no_charge_window", "hours": [9, 10]},
+
+    {"id": "nd-01", "note": "For protection testing, the battery must not discharge from 6 PM until 8 PM.", "directive_type": "no_discharge_window", "hours": [18, 19]},
+    {"id": "nd-02", "note": "Relay checks: no battery output between 17:00 and 19:00.", "directive_type": "no_discharge_window", "hours": [17, 18]},
+    {"id": "nd-03", "note": "Do not draw from the battery from 1 PM to 4 PM while the BMS is recalibrated.", "directive_type": "no_discharge_window", "hours": [13, 14, 15]},
+    {"id": "nd-04", "note": "Discharging is prohibited from 8 PM until midnight tonight.", "directive_type": "no_discharge_window", "hours": [20, 21, 22, 23]},
+    {"id": "nd-05", "note": "Keep the battery from discharging between 7 and 9 in the morning.", "directive_type": "no_discharge_window", "hours": [7, 8]},
+
+    {"id": "mg-01", "note": "From 6 PM until 9 PM, grid import must not exceed 155 kWh in any hour.", "directive_type": "max_grid_window", "hours": [18, 19, 20], "max_grid_kwh": 155},
+    {"id": "mg-02", "note": "The evening transformer limit is 180 kWh of grid import from 7 PM until 9 PM.", "directive_type": "max_grid_window", "hours": [19, 20], "max_grid_kwh": 180},
+    {"id": "mg-03", "note": "Grid intake must stay at or below 190 kWh from 19:00 to 22:00 while the substation is constrained.", "directive_type": "max_grid_window", "hours": [19, 20, 21], "max_grid_kwh": 190},
+    {"id": "mg-04", "note": "Feeder is derated: cap grid draw at 140 kW per hour between 5 PM and 8 PM.", "directive_type": "max_grid_window", "hours": [17, 18, 19], "max_grid_kwh": 140},
+    {"id": "mg-05", "note": "Utility asks us to limit purchases to 120 kWh an hour from 4 PM until 6 PM.", "directive_type": "max_grid_window", "hours": [16, 17], "max_grid_kwh": 120},
+    {"id": "mg-06", "note": "Substation maintenance: at most 100 kWh may be imported each hour from midnight to 3 AM.", "directive_type": "max_grid_window", "hours": [0, 1, 2], "max_grid_kwh": 100},
+
+    {"id": "no-01", "note": "The cafeteria menu changes tomorrow.", "directive_type": "no_op"},
+    {"id": "no-02", "note": "The sports office moved next month's registration deadline.", "directive_type": "no_op"},
+    {"id": "no-03", "note": "A seminar room booking was moved to next week.", "directive_type": "no_op"},
+    {"id": "no-04", "note": "The library is extending book-return hours next week.", "directive_type": "no_op"},
+    {"id": "no-05", "note": "Facilities will wash the solar panels next Tuesday from noon until 2 PM.", "directive_type": "no_op"},
+    {"id": "no-06", "note": "Last month the battery charger was isolated for maintenance from 2 AM to 5 AM.", "directive_type": "no_op"},
+    {"id": "no-07", "note": "Reminder: the energy dashboard training session is on Friday at 10 AM.", "directive_type": "no_op"},
+    {"id": "no-08", "note": "The parking lot will be repainted this weekend.", "directive_type": "no_op"},
+    {"id": "no-09", "note": "Please submit the quarterly electricity bill summary by the 15th.", "directive_type": "no_op"},
+    {"id": "no-10", "note": "The new solar panels ordered for the science block arrive next semester.", "directive_type": "no_op"},
+
+    {"id": "mix-01", "note": "Between 12 PM and 3 PM usable solar drops to 35% because of dust; nothing else changes.", "directive_type": "solar_reduction", "hours": [12, 13, 14], "factor": 0.35},
+    {"id": "mix-02", "note": "Keep 100 kWh in the battery from 5 PM to 6 PM for the lab shutdown procedure.", "directive_type": "minimum_battery_reserve", "hours": [17], "minimum_energy_kwh": 100},
+    {"id": "mix-03", "note": "Charger locked out for the single hour starting 2 PM.", "directive_type": "no_charge_window", "hours": [14]},
+    {"id": "mix-04", "note": "Grid import is capped at 160 kWh/h between 18:00 and 19:00 and again from 21:00 to 22:00.", "directive_type": "max_grid_window", "hours": [18, 21], "max_grid_kwh": 160}
+  ]
+}
