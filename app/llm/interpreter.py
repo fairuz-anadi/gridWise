@@ -127,71 +127,97 @@ async def _call_groq(
 
 async def _call_openai(
     user_prompt: str,
-    openai_api_key: str
+    openai_api_key: str,
+    models: list[str] = ["gpt-4.1-mini", "gpt-4o-mini"]
 ) -> dict[str, Any] | None:
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {openai_api_key}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "model": "gpt-4o-mini",
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt}
-        ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.0,
-        "max_tokens": 400
-    }
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            resp = await client.post(url, headers=headers, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-                return json.loads(content)
-            else:
-                logger.warning("OpenAI error %d: %s", resp.status_code, resp.text[:100])
-        except Exception as e:
-            logger.error("Exception calling OpenAI: %s", e)
+        for model in models:
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "response_format": {"type": "json_object"},
+                "temperature": 0.0,
+                "max_tokens": 500
+            }
+            try:
+                resp = await client.post(url, headers=headers, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    content = data["choices"][0]["message"]["content"]
+                    return json.loads(content)
+                elif resp.status_code == 429:
+                    logger.warning("OpenAI model %s hit 429, trying next model", model)
+                    continue
+                else:
+                    logger.warning("OpenAI model %s error %d: %s", model, resp.status_code, resp.text[:100])
+            except Exception as e:
+                logger.error("Exception calling OpenAI with model %s: %s", model, e)
+                continue
+    return None
+
+
+def _extract_interpretations(result: Any) -> list[dict[str, Any]] | None:
+    if result and isinstance(result, dict):
+        if "interpretations" in result and isinstance(result["interpretations"], list):
+            return result["interpretations"]
+        elif "directives" in result and isinstance(result["directives"], list):
+            return result["directives"]
+    elif isinstance(result, list):
+        return result
     return None
 
 
 async def call_llm_interpreter(notes: list[str], battery: Battery) -> list[dict[str, Any]]:
     """Invoke LLM with multi-provider failover to interpret operator notes.
     
+    Primary provider is OpenAI with automatic fallback to Groq.
     Returns a list of raw dicts or fallback safe defaults.
     """
     user_content = f"Battery capacity: {battery.capacity_kwh} kWh\nOperator notes:\n"
     for i, note in enumerate(notes):
         user_content += f"[{i}] {note}\n"
 
-    provider = os.getenv("LLM_PROVIDER", "groq").lower()
+    provider = os.getenv("LLM_PROVIDER", "openai").lower()
     groq_key = os.getenv("GROQ_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
 
-    parsed_result = None
+    if provider == "openai":
+        if openai_key:
+            parsed_result = await _call_openai(user_content, openai_key)
+            extracted = _extract_interpretations(parsed_result)
+            if extracted is not None:
+                return extracted
+            logger.warning("OpenAI did not return valid interpretations; attempting fallback to Groq")
 
-    if provider == "openai" and openai_key:
-        parsed_result = await _call_openai(user_content, openai_key)
-        if not parsed_result and groq_key:
+        if groq_key:
             logger.info("Failing over from OpenAI to Groq")
             parsed_result = await _call_groq(user_content, groq_key)
+            extracted = _extract_interpretations(parsed_result)
+            if extracted is not None:
+                return extracted
     else:
         if groq_key:
             parsed_result = await _call_groq(user_content, groq_key)
-        if not parsed_result and openai_key:
+            extracted = _extract_interpretations(parsed_result)
+            if extracted is not None:
+                return extracted
+            logger.warning("Groq did not return valid interpretations; attempting fallback to OpenAI")
+
+        if openai_key:
             logger.info("Failing over from Groq to OpenAI")
             parsed_result = await _call_openai(user_content, openai_key)
-
-    if parsed_result and isinstance(parsed_result, dict):
-        # Could be under key "interpretations" or "directives" or top-level list
-        if "interpretations" in parsed_result and isinstance(parsed_result["interpretations"], list):
-            return parsed_result["interpretations"]
-        elif "directives" in parsed_result and isinstance(parsed_result["directives"], list):
-            return parsed_result["directives"]
+            extracted = _extract_interpretations(parsed_result)
+            if extracted is not None:
+                return extracted
 
     # Controlled safe failure: return empty list so guardrail can safely fallback to no_op
     logger.warning("LLM returned malformed or empty output; invoking guardrail fallback")
