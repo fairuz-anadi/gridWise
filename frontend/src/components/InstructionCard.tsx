@@ -27,10 +27,31 @@ export function InstructionCard({ index, note, directive, battery, busy, compari
   const verdict = comparison && directive ? sameDirective(comparison.previousDirective, directive).all : undefined
 
   const human = directive ? describeDirective(directive, battery) : null
-  const title = human ? human.title : truncate(note, 80)
-  const range = human ? human.range ?? (human.muted ? 'No effect on the plan' : '') : 'Interpreted when you generate a plan'
-  const icon = human ? human.icon : 'dot'
   const muted = human?.muted ?? false
+
+  // Before a plan exists there is nothing to translate: show the note itself, nothing to expand.
+  if (!human || !directive) {
+    return (
+      <div className="instr pending">
+        <div className="row" style={{ cursor: 'default' }}>
+          <span className="icon-wrap dot">
+            <Icon name="dot" />
+          </span>
+          <span style={{ minWidth: 0 }}>
+            <div className="title" style={{ fontWeight: 500 }}>
+              “{note.trim() || 'Empty instruction'}”
+            </div>
+            <div className="range">Interpreted when you generate a plan</div>
+          </span>
+          <span />
+        </div>
+      </div>
+    )
+  }
+
+  const title = human.title
+  const range = human.range ?? (human.muted ? 'No effect on the plan' : '')
+  const icon = human.icon
 
   return (
     <div className={`instr ${muted ? 'muted' : ''}`} data-open={open}>
@@ -151,9 +172,4 @@ function ComparisonView({ comparison, current, currentNote, battery }: { compari
 
 function rangeOrDash(d: Directive): string {
   return d.structured_adjustment ? rangeLabel(d.structured_adjustment.hours) : '—'
-}
-
-function truncate(s: string, n: number): string {
-  const t = s.trim()
-  return t.length > n ? `${t.slice(0, n - 1).trimEnd()}…` : t || 'Empty instruction'
 }

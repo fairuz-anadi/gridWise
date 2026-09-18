@@ -22,6 +22,10 @@ npm run build      # -> frontend/dist, served by FastAPI at "/" in production
 | Views | `src/views/*` | Overview (situation + instructions + CTA), Scenario (all editable inputs, raw JSON), Schedule (result, charts, recommendations, table, developer details) |
 | Components | `src/components/*` | `AppShell`, `MetricCard`, `EnergyChart`, `BatteryChart`, `OperatorInstructions` / `InstructionCard` (incl. the wording-comparison demo), `OptimizationProgress`, `PlanSummary`, `Recommendations`, `ScheduleTable`, `AdvancedDetails`, `ErrorState`, `ScenarioEditor` |
 
+Theme follows the OS (`prefers-color-scheme`) until the viewer picks one with the sun/moon button; the
+choice is kept in `localStorage`. Every color is a token in `src/index.css` (dark base, light overrides), so
+charts and components adapt without per-component styling. Interface font is Inter Tight; mono only for JSON/IDs.
+
 Technical detail is never removed, only moved behind disclosure: each instruction card expands to the
 raw directive, the schedule table and raw request/response JSON live under "View full 24-hour schedule"
 and "Advanced · developer details".

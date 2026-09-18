@@ -1,5 +1,5 @@
-/* GridWise — premium dark energy dashboard. A deliberately single-theme design:
-   every color is a token so the palette stays coherent, and the page paints its own ground. */
+/* GridWise — energy dashboard tokens. Dark is the base design; light redefines the same tokens.
+   The viewer's OS preference applies by default; an explicit choice stamps data-theme on <html>. */
 :root {
   --bg: #0b100e;
   --bg-2: #0f1613;
@@ -12,6 +12,8 @@
   --muted: #93a39c;
   --dim: #66756f;
   --mint: #4fd1a5;
+  --mint-text: #4fd1a5;
+  --mint-hover: #63dbb3;
   --mint-ink: #062a1f;
   --mint-soft: rgba(79, 209, 165, 0.14);
   --lime: #e2c84f;
@@ -23,12 +25,163 @@
   --steel: #8ca3c4;
   --steel-soft: rgba(140, 163, 196, 0.16);
   --plum: #b78fd6;
+  --hover: rgba(255, 255, 255, 0.04);
+  --nav-bg: rgba(11, 16, 14, 0.82);
+  --nav-active-bg: #1d2924;
+  --nav-active-fg: #e9efec;
+  --status-bg: rgba(79, 209, 165, 0.14);
+  --status-fg: #4fd1a5;
+  --instr-bg: #17211d;
+  --instr-hover: #1d2924;
+  --instr-border: rgba(255, 255, 255, 0.07);
   --radius: 20px;
   --radius-sm: 12px;
   --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 20px 40px -24px rgba(0, 0, 0, 0.6);
-  --font: 'Manrope', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font: 'Inter Tight', 'Segoe UI', system-ui, -apple-system, sans-serif;
   --mono: 'IBM Plex Mono', Menlo, Consolas, monospace;
+  /* visualization — dark: the values the charts have always used */
+  --chart-grid: #8ca3c4;
+  --chart-solar: #e2c84f;
+  --chart-battery: #4fd1a5;
+  --chart-demand: #e9efec;
+  --chart-price: #e39a3b;
+  --chart-charge: #b78fd6;
+  --chart-gridline: rgba(255, 255, 255, 0.07);
+  --chart-axis: #66756f;
+  --chart-solar-fill-top: rgba(226, 200, 79, 0.45);
+  --chart-solar-fill-bottom: rgba(226, 200, 79, 0.04);
+  --chart-battery-fill-top: rgba(79, 209, 165, 0.35);
+  --chart-battery-fill-bottom: rgba(79, 209, 165, 0.03);
+  --chart-reserve: rgba(239, 111, 98, 0.7);
+  --chart-reserve-fill: rgba(239, 111, 98, 0.12);
+  --chart-event-solar: rgba(226, 200, 79, 0.07);
+  --chart-event-grid: rgba(140, 163, 196, 0.07);
+  --chart-event-reserve: rgba(183, 143, 214, 0.07);
+  --chart-event-battery: rgba(227, 154, 59, 0.07);
+  --chart-cursor: rgba(255, 255, 255, 0.04);
+  --tip-bg: #1d2924;
+  --tip-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.7);
   color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+  --bg: #f4f5f2;
+  --bg-2: #f7f8f6;
+  --surface: #ffffff;
+  --surface-2: #eff2ef;
+  --surface-3: #e5eae6;
+  --border: rgba(18, 38, 30, 0.11);
+  --border-strong: rgba(18, 38, 30, 0.2);
+  --text: #121c18;
+  --muted: #4b5a54;
+  --dim: #66746e;
+  --mint: #0f8a6a;
+  --mint-text: #0b6b52;
+  --mint-hover: #0b7a5d;
+  --mint-ink: #ffffff;
+  --mint-soft: rgba(15, 138, 106, 0.11);
+  --lime: #8f7208;
+  --lime-soft: rgba(143, 114, 8, 0.12);
+  --amber: #b0560f;
+  --amber-soft: rgba(176, 86, 15, 0.11);
+  --red: #bf4335;
+  --red-soft: rgba(191, 67, 53, 0.1);
+  --steel: #4d6d99;
+  --steel-soft: rgba(77, 109, 153, 0.13);
+  --plum: #6f4a95;
+  --hover: rgba(18, 38, 30, 0.035);
+  --nav-bg: rgba(244, 245, 242, 0.88);
+  --nav-active-bg: rgba(15, 138, 106, 0.11);
+  --nav-active-fg: #0b6b52;
+  --status-bg: #eff2ef;
+  --status-fg: #4b5a54;
+  --instr-bg: #ffffff;
+  --instr-hover: #f7f8f6;
+  --instr-border: rgba(18, 38, 30, 0.11);
+  --shadow: 0 1px 2px rgba(18, 38, 30, 0.05);
+  /* visualization — light: softer, cleaner palette for a white canvas */
+  --chart-grid: #6f8db8;
+  --chart-solar: #dfae3b;
+  --chart-battery: #3eaf90;
+  --chart-demand: #263a34;
+  --chart-price: #d0783a;
+  --chart-charge: #9b7cc2;
+  --chart-gridline: #e5eae7;
+  --chart-axis: #6b7873;
+  --chart-solar-fill-top: rgba(223, 174, 59, 0.2);
+  --chart-solar-fill-bottom: rgba(223, 174, 59, 0.02);
+  --chart-battery-fill-top: rgba(62, 175, 144, 0.2);
+  --chart-battery-fill-bottom: rgba(62, 175, 144, 0.02);
+  --chart-reserve: rgba(214, 94, 78, 0.6);
+  --chart-reserve-fill: rgba(214, 94, 78, 0.08);
+  --chart-event-solar: rgba(223, 174, 59, 0.1);
+  --chart-event-grid: rgba(111, 141, 184, 0.08);
+  --chart-event-reserve: rgba(155, 124, 194, 0.08);
+  --chart-event-battery: rgba(208, 120, 58, 0.07);
+  --chart-cursor: rgba(18, 38, 30, 0.035);
+  --tip-bg: #ffffff;
+  --tip-shadow: 0 4px 14px -4px rgba(18, 38, 30, 0.16);
+  color-scheme: light;
+  }
+}
+:root[data-theme='light'] {
+  --bg: #f4f5f2;
+  --bg-2: #f7f8f6;
+  --surface: #ffffff;
+  --surface-2: #eff2ef;
+  --surface-3: #e5eae6;
+  --border: rgba(18, 38, 30, 0.11);
+  --border-strong: rgba(18, 38, 30, 0.2);
+  --text: #121c18;
+  --muted: #4b5a54;
+  --dim: #66746e;
+  --mint: #0f8a6a;
+  --mint-text: #0b6b52;
+  --mint-hover: #0b7a5d;
+  --mint-ink: #ffffff;
+  --mint-soft: rgba(15, 138, 106, 0.11);
+  --lime: #8f7208;
+  --lime-soft: rgba(143, 114, 8, 0.12);
+  --amber: #b0560f;
+  --amber-soft: rgba(176, 86, 15, 0.11);
+  --red: #bf4335;
+  --red-soft: rgba(191, 67, 53, 0.1);
+  --steel: #4d6d99;
+  --steel-soft: rgba(77, 109, 153, 0.13);
+  --plum: #6f4a95;
+  --hover: rgba(18, 38, 30, 0.035);
+  --nav-bg: rgba(244, 245, 242, 0.88);
+  --nav-active-bg: rgba(15, 138, 106, 0.11);
+  --nav-active-fg: #0b6b52;
+  --status-bg: #eff2ef;
+  --status-fg: #4b5a54;
+  --instr-bg: #ffffff;
+  --instr-hover: #f7f8f6;
+  --instr-border: rgba(18, 38, 30, 0.11);
+  --shadow: 0 1px 2px rgba(18, 38, 30, 0.05);
+  /* visualization — light: softer, cleaner palette for a white canvas */
+  --chart-grid: #6f8db8;
+  --chart-solar: #dfae3b;
+  --chart-battery: #3eaf90;
+  --chart-demand: #263a34;
+  --chart-price: #d0783a;
+  --chart-charge: #9b7cc2;
+  --chart-gridline: #e5eae7;
+  --chart-axis: #6b7873;
+  --chart-solar-fill-top: rgba(223, 174, 59, 0.2);
+  --chart-solar-fill-bottom: rgba(223, 174, 59, 0.02);
+  --chart-battery-fill-top: rgba(62, 175, 144, 0.2);
+  --chart-battery-fill-bottom: rgba(62, 175, 144, 0.02);
+  --chart-reserve: rgba(214, 94, 78, 0.6);
+  --chart-reserve-fill: rgba(214, 94, 78, 0.08);
+  --chart-event-solar: rgba(223, 174, 59, 0.1);
+  --chart-event-grid: rgba(111, 141, 184, 0.08);
+  --chart-event-reserve: rgba(155, 124, 194, 0.08);
+  --chart-event-battery: rgba(208, 120, 58, 0.07);
+  --chart-cursor: rgba(18, 38, 30, 0.035);
+  --tip-bg: #ffffff;
+  --tip-shadow: 0 4px 14px -4px rgba(18, 38, 30, 0.16);
+  color-scheme: light;
 }
 
 *,
@@ -173,7 +326,7 @@ textarea {
 }
 .btn:hover:not(:disabled) {
   background: var(--surface-3);
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: var(--border-strong);
 }
 .btn:active:not(:disabled) {
   transform: translateY(1px);
@@ -188,7 +341,7 @@ textarea {
   border-radius: 14px;
 }
 .btn.primary:hover:not(:disabled) {
-  background: #63dbb3;
+  background: var(--mint-hover);
   border-color: transparent;
 }
 .btn.ghost {
@@ -238,7 +391,15 @@ textarea {
 }
 .chip.ok {
   background: var(--mint-soft);
-  color: var(--mint);
+  color: var(--mint-text);
+}
+/* System status: informative, never competing with the primary action. Dot stays green. */
+.chip.status {
+  background: var(--status-bg);
+  color: var(--status-fg);
+}
+.chip.status.ok::before {
+  background: var(--mint);
 }
 .chip.warn {
   background: var(--amber-soft);
@@ -252,6 +413,23 @@ textarea {
   display: none;
 }
 
+/* ---------- theme toggle ---------- */
+.theme-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.theme-btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
 /* ---------- shell ---------- */
 .shell {
   min-height: 100%;
@@ -263,7 +441,7 @@ textarea {
   top: 0;
   z-index: 20;
   padding-top: env(safe-area-inset-top, 0px);
-  background: rgba(11, 16, 14, 0.82);
+  background: var(--nav-bg);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--border);
@@ -322,8 +500,8 @@ textarea {
   border-radius: 999px;
 }
 .nav button[aria-current='page'] {
-  background: var(--surface-3);
-  color: var(--text);
+  background: var(--nav-active-bg);
+  color: var(--nav-active-fg);
 }
 .nav button:hover:not([aria-current='page']) {
   color: var(--text);
@@ -531,7 +709,7 @@ textarea {
   font-weight: 600;
 }
 .metric.accent .value {
-  color: var(--mint);
+  color: var(--mint-text);
 }
 .metric .value.text {
   font-size: 26px;
@@ -583,12 +761,12 @@ textarea {
   border-radius: 0;
 }
 .chart-tip {
-  background: var(--surface-3);
+  background: var(--tip-bg);
   border: 1px solid var(--border-strong);
   border-radius: 12px;
   padding: 10px 12px;
   font-size: 13px;
-  box-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.7);
+  box-shadow: var(--tip-shadow);
   min-width: 190px;
 }
 .chart-tip .h {
@@ -624,14 +802,17 @@ textarea {
 #instructions {
   scroll-margin-top: 84px;
 }
+#instructions {
+  scroll-margin-top: 84px;
+}
 .instr-list {
   display: grid;
   gap: 10px;
 }
 .instr {
-  border: 1px solid var(--border);
+  border: 1px solid var(--instr-border);
   border-radius: 14px;
-  background: var(--surface-2);
+  background: var(--instr-bg);
   overflow: hidden;
 }
 .instr.muted {
@@ -650,10 +831,13 @@ textarea {
   color: inherit;
 }
 .instr > .row:hover {
-  background: var(--surface-3);
+  background: var(--instr-hover);
 }
 .instr.muted > .row:hover {
-  background: var(--surface-2);
+  background: var(--instr-hover);
+}
+.instr.pending > .row:hover {
+  background: transparent;
 }
 .icon-wrap {
   width: 38px;
@@ -787,7 +971,7 @@ textarea {
   gap: 8px;
 }
 .compare.same .verdict {
-  color: var(--mint);
+  color: var(--mint-text);
 }
 .compare.changed .verdict {
   color: var(--amber);
@@ -892,10 +1076,10 @@ table.data input:focus {
   background: var(--surface);
 }
 table.data tr.win td {
-  background: rgba(183, 143, 214, 0.08);
+  background: var(--hover);
 }
 .act-charge {
-  color: var(--mint);
+  color: var(--mint-text);
   font-weight: 600;
 }
 .act-discharge {
@@ -995,7 +1179,7 @@ table.data tr.win td {
   font-weight: 700;
 }
 .reco .range {
-  color: var(--mint);
+  color: var(--mint-text);
   font-size: 13px;
   font-weight: 600;
   margin-left: 8px;

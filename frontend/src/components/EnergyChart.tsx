@@ -3,7 +3,7 @@ import { hourBlocks, hourLabel } from '../humanize'
 import { effectiveSolar } from '../plan'
 import type { Directive, OptimizeResponse, Scenario } from '../types'
 
-const AXIS = { fontFamily: 'Manrope, sans-serif', fontSize: 12, fill: 'var(--dim)' } as const
+const AXIS = { fontFamily: 'Inter Tight, sans-serif', fontSize: 12, fill: 'var(--chart-axis)' } as const
 const hh = (h: number) => String(h).padStart(2, '0')
 
 interface TipRow {
@@ -53,14 +53,21 @@ function DirectiveBands({ directives, yAxisId }: { directives: Directive[]; yAxi
   const bands: { from: number; to: number; color: string }[] = []
   for (const d of directives) {
     if (!d.applies || !d.structured_adjustment) continue
+    // Event windows are pre-tinted tokens (color + opacity) so each theme tunes its own strength.
     const color =
-      d.directive_type === 'solar_reduction' ? 'var(--lime)' : d.directive_type === 'max_grid_window' ? 'var(--steel)' : d.directive_type === 'minimum_battery_reserve' ? 'var(--plum)' : 'var(--amber)'
+      d.directive_type === 'solar_reduction'
+        ? 'var(--chart-event-solar)'
+        : d.directive_type === 'max_grid_window'
+          ? 'var(--chart-event-grid)'
+          : d.directive_type === 'minimum_battery_reserve'
+            ? 'var(--chart-event-reserve)'
+            : 'var(--chart-event-battery)'
     for (const [a, b] of hourBlocks(d.structured_adjustment.hours)) bands.push({ from: a, to: b - 1, color })
   }
   return (
     <>
       {bands.map((b, i) => (
-        <ReferenceArea key={i} x1={b.from} x2={b.to} yAxisId={yAxisId} fill={b.color} fillOpacity={0.07} ifOverflow="extendDomain" />
+        <ReferenceArea key={i} x1={b.from} x2={b.to} yAxisId={yAxisId} fill={b.color} fillOpacity={1} ifOverflow="extendDomain" />
       ))}
     </>
   )
@@ -76,9 +83,9 @@ export function ScenarioEnergyChart({ scenario, directives = [] }: { scenario: S
     tariff: fin(h.tariff_bdt_per_kwh),
   }))
   const rows: TipRow[] = [
-    { key: 'demand', label: 'Expected demand', color: 'var(--text)', unit: 'kWh' },
-    { key: 'solar', label: 'Solar available', color: 'var(--lime)', unit: 'kWh' },
-    { key: 'tariff', label: 'Grid price', color: 'var(--amber)', unit: 'BDT/kWh' },
+    { key: 'demand', label: 'Expected demand', color: 'var(--chart-demand)', unit: 'kWh' },
+    { key: 'solar', label: 'Solar available', color: 'var(--chart-solar)', unit: 'kWh' },
+    { key: 'tariff', label: 'Grid price', color: 'var(--chart-price)', unit: 'BDT/kWh' },
   ]
   return (
     <div className="card chart-card">
@@ -89,15 +96,15 @@ export function ScenarioEnergyChart({ scenario, directives = [] }: { scenario: S
         </div>
         <div className="legend">
           <span>
-            <i className="line" style={{ '--c': 'var(--text)' } as React.CSSProperties} />
+            <i className="line" style={{ '--c': 'var(--chart-demand)' } as React.CSSProperties} />
             demand
           </span>
           <span>
-            <i style={{ '--c': 'var(--lime)' } as React.CSSProperties} />
+            <i style={{ '--c': 'var(--chart-solar)' } as React.CSSProperties} />
             solar
           </span>
           <span>
-            <i className="dash" style={{ '--c': 'var(--amber)' } as React.CSSProperties} />
+            <i className="dash" style={{ '--c': 'var(--chart-price)' } as React.CSSProperties} />
             price
           </span>
         </div>
@@ -106,19 +113,19 @@ export function ScenarioEnergyChart({ scenario, directives = [] }: { scenario: S
         <ComposedChart data={data} margin={{ top: 10, right: 6, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id="solarFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--lime)" stopOpacity={0.45} />
-              <stop offset="100%" stopColor="var(--lime)" stopOpacity={0.04} />
+              <stop offset="0%" stopColor="var(--chart-solar-fill-top)" />
+              <stop offset="100%" stopColor="var(--chart-solar-fill-bottom)" />
             </linearGradient>
           </defs>
-          <CartesianGrid stroke="var(--border)" vertical={false} />
+          <CartesianGrid stroke="var(--chart-gridline)" vertical={false} />
           <DirectiveBands directives={directives} yAxisId="kwh" />
-          <XAxis dataKey="hour" type="number" domain={[0, 23]} ticks={[0, 3, 6, 9, 12, 15, 18, 21]} tickFormatter={(h) => hh(Number(h))} tick={AXIS} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
+          <XAxis dataKey="hour" type="number" domain={[0, 23]} ticks={[0, 3, 6, 9, 12, 15, 18, 21]} tickFormatter={(h) => hh(Number(h))} tick={AXIS} tickLine={false} axisLine={{ stroke: 'var(--chart-gridline)' }} />
           <YAxis yAxisId="kwh" tick={AXIS} tickLine={false} axisLine={false} width={44} />
-          <YAxis yAxisId="bdt" orientation="right" tick={{ ...AXIS, fill: 'var(--amber)' }} tickLine={false} axisLine={false} width={40} />
-          <Tooltip content={<Tip rows={rows} />} cursor={{ stroke: 'var(--border-strong)' }} />
-          <Area yAxisId="kwh" type="monotone" dataKey="solar" stroke="var(--lime)" strokeWidth={1.5} fill="url(#solarFill)" isAnimationActive={false} />
-          <Line yAxisId="kwh" type="monotone" dataKey="demand" stroke="var(--text)" strokeWidth={2.2} dot={false} isAnimationActive={false} />
-          <Line yAxisId="bdt" type="monotone" dataKey="tariff" stroke="var(--amber)" strokeWidth={1.8} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
+          <YAxis yAxisId="bdt" orientation="right" tick={{ ...AXIS, fill: 'var(--chart-price)' }} tickLine={false} axisLine={false} width={40} />
+          <Tooltip content={<Tip rows={rows} />} cursor={{ stroke: 'var(--chart-axis)' }} />
+          <Area yAxisId="kwh" type="monotone" dataKey="solar" stroke="var(--chart-solar)" strokeWidth={1.5} fill="url(#solarFill)" isAnimationActive={false} />
+          <Line yAxisId="kwh" type="monotone" dataKey="demand" stroke="var(--chart-demand)" strokeWidth={2.2} dot={false} isAnimationActive={false} />
+          <Line yAxisId="bdt" type="monotone" dataKey="tariff" stroke="var(--chart-price)" strokeWidth={1.8} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -137,12 +144,12 @@ export function PlanEnergyChart({ scenario, result }: { scenario: Scenario; resu
     tariff: scenario.hours[i]?.tariff_bdt_per_kwh ?? 0,
   }))
   const rows: TipRow[] = [
-    { key: 'demand', label: 'Demand', color: 'var(--text)', unit: 'kWh' },
-    { key: 'grid', label: 'Grid import', color: 'var(--steel)', unit: 'kWh' },
-    { key: 'solar', label: 'Solar used', color: 'var(--lime)', unit: 'kWh' },
-    { key: 'discharge', label: 'From battery', color: 'var(--mint)', unit: 'kWh' },
-    { key: 'charge', label: 'Into battery', color: 'var(--plum)', unit: 'kWh' },
-    { key: 'tariff', label: 'Grid price', color: 'var(--amber)', unit: 'BDT/kWh' },
+    { key: 'demand', label: 'Demand', color: 'var(--chart-demand)', unit: 'kWh' },
+    { key: 'grid', label: 'Grid import', color: 'var(--chart-grid)', unit: 'kWh' },
+    { key: 'solar', label: 'Solar used', color: 'var(--chart-solar)', unit: 'kWh' },
+    { key: 'discharge', label: 'From battery', color: 'var(--chart-battery)', unit: 'kWh' },
+    { key: 'charge', label: 'Into battery', color: 'var(--chart-charge)', unit: 'kWh' },
+    { key: 'tariff', label: 'Grid price', color: 'var(--chart-price)', unit: 'BDT/kWh' },
   ]
   return (
     <div className="card chart-card">
@@ -153,40 +160,40 @@ export function PlanEnergyChart({ scenario, result }: { scenario: Scenario; resu
         </div>
         <div className="legend">
           <span>
-            <i style={{ '--c': 'var(--steel)' } as React.CSSProperties} />
+            <i style={{ '--c': 'var(--chart-grid)' } as React.CSSProperties} />
             grid
           </span>
           <span>
-            <i style={{ '--c': 'var(--lime)' } as React.CSSProperties} />
+            <i style={{ '--c': 'var(--chart-solar)' } as React.CSSProperties} />
             solar
           </span>
           <span>
-            <i style={{ '--c': 'var(--mint)' } as React.CSSProperties} />
+            <i style={{ '--c': 'var(--chart-battery)' } as React.CSSProperties} />
             battery
           </span>
           <span>
-            <i className="line" style={{ '--c': 'var(--text)' } as React.CSSProperties} />
+            <i className="line" style={{ '--c': 'var(--chart-demand)' } as React.CSSProperties} />
             demand
           </span>
           <span>
-            <i className="dash" style={{ '--c': 'var(--amber)' } as React.CSSProperties} />
+            <i className="dash" style={{ '--c': 'var(--chart-price)' } as React.CSSProperties} />
             price
           </span>
         </div>
       </div>
       <ResponsiveContainer width="100%" height={340}>
         <ComposedChart data={data} margin={{ top: 10, right: 6, left: 0, bottom: 0 }} barCategoryGap="22%">
-          <CartesianGrid stroke="var(--border)" vertical={false} />
+          <CartesianGrid stroke="var(--chart-gridline)" vertical={false} />
           <DirectiveBands directives={result.directive_interpretation} yAxisId="kwh" />
-          <XAxis dataKey="hour" type="category" tickFormatter={(h) => hh(Number(h))} interval={2} tick={AXIS} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
+          <XAxis dataKey="hour" type="category" tickFormatter={(h) => hh(Number(h))} interval={2} tick={AXIS} tickLine={false} axisLine={{ stroke: 'var(--chart-gridline)' }} />
           <YAxis yAxisId="kwh" tick={AXIS} tickLine={false} axisLine={false} width={44} />
-          <YAxis yAxisId="bdt" orientation="right" tick={{ ...AXIS, fill: 'var(--amber)' }} tickLine={false} axisLine={false} width={40} />
-          <Tooltip content={<Tip rows={rows} />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-          <Bar yAxisId="kwh" dataKey="grid" stackId="s" fill="var(--steel)" isAnimationActive={false} />
-          <Bar yAxisId="kwh" dataKey="solar" stackId="s" fill="var(--lime)" isAnimationActive={false} />
-          <Bar yAxisId="kwh" dataKey="discharge" stackId="s" fill="var(--mint)" radius={[4, 4, 0, 0]} isAnimationActive={false} />
-          <Line yAxisId="kwh" type="stepAfter" dataKey="demand" stroke="var(--text)" strokeWidth={2} dot={false} isAnimationActive={false} />
-          <Line yAxisId="bdt" type="monotone" dataKey="tariff" stroke="var(--amber)" strokeWidth={1.8} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
+          <YAxis yAxisId="bdt" orientation="right" tick={{ ...AXIS, fill: 'var(--chart-price)' }} tickLine={false} axisLine={false} width={40} />
+          <Tooltip content={<Tip rows={rows} />} cursor={{ fill: 'var(--chart-cursor)' }} />
+          <Bar yAxisId="kwh" dataKey="grid" stackId="s" fill="var(--chart-grid)" isAnimationActive={false} />
+          <Bar yAxisId="kwh" dataKey="solar" stackId="s" fill="var(--chart-solar)" isAnimationActive={false} />
+          <Bar yAxisId="kwh" dataKey="discharge" stackId="s" fill="var(--chart-battery)" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+          <Line yAxisId="kwh" type="stepAfter" dataKey="demand" stroke="var(--chart-demand)" strokeWidth={2} dot={false} isAnimationActive={false} />
+          <Line yAxisId="bdt" type="monotone" dataKey="tariff" stroke="var(--chart-price)" strokeWidth={1.8} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>

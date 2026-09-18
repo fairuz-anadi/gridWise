@@ -6,6 +6,7 @@ import { clientReplay } from './plan'
 import { DEFAULT_SAMPLE_ID, findSample } from './samples'
 import type { ResultState, Run } from './state'
 import type { Scenario } from './types'
+import { useTheme } from './theme'
 import { validateScenario } from './validate'
 import { OverviewView } from './views/OverviewView'
 import { ScenarioView } from './views/ScenarioView'
@@ -20,6 +21,7 @@ export default function App() {
   const [lastRun, setLastRun] = useState<Run | null>(null)
   const [previous, setPrevious] = useState<Run | null>(null)
   const [health, setHealth] = useState<'unknown' | 'ok' | 'down'>('unknown')
+  const [, isDark, toggleTheme] = useTheme()
   const abortRef = useRef<AbortController | null>(null)
   // Mirror of lastRun for run(), which must snapshot it before the result switches to "loading".
   const lastRunRef = useRef<Run | null>(null)
@@ -114,7 +116,7 @@ export default function App() {
     sample && JSON.stringify(sample.input) === JSON.stringify(lastRun?.scenario) ? sample.expected_output.total_cost_bdt : undefined
 
   return (
-    <AppShell view={view} onView={go} health={health} mock={MOCK}>
+    <AppShell view={view} onView={go} health={health} mock={MOCK} isDark={isDark} onToggleTheme={toggleTheme}>
       {view === 'overview' && (
         <OverviewView
           scenario={scenario}
