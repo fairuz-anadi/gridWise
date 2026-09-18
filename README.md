@@ -15,6 +15,12 @@ GridWise is an intelligent energy scheduling service that unifies Large Language
 - **API Health Endpoint**: [https://gridwise-hampton.onrender.com/health](https://gridwise-hampton.onrender.com/health)
 - **Optimization Endpoint**: `POST https://gridwise-hampton.onrender.com/optimize-energy`
 
+> **Availability during evaluation.** The service runs on Render's free plan, which puts idle services to sleep
+> after 15 minutes. We keep it awake with an external **cron-job.org** ping to `GET /health` every 5 minutes;
+> measured after 17 minutes with no other traffic, `/health` answered in **0.13 s**. If the live URL is ever
+> unreachable, the identical build runs in one command from the public Docker image (no login needed) —
+> see [Availability during evaluation](#availability-during-evaluation) and [Docker fallback](#docker-fallback-if-the-live-url-is-unavailable).
+
 ---
 
 ## Why GridWise?
@@ -528,8 +534,8 @@ The offline test suite requires no external network access or API credentials. I
 ```bash
 pytest -q
 ```
-**Test Coverage (93 passed tests):**
-- `tests/test_api.py`: HTTP status codes, malformed JSON handling, input validation.
+**Test Coverage (99 passed tests):**
+- `tests/test_api.py`: HTTP status codes, malformed JSON handling, input validation, JSON accepted under any Content-Type, `HEAD /health`.
 - `tests/test_guardrails.py`: Window expansions, boundary clamping, non-finite handling, outage resilience.
 - `tests/test_optimizer.py`: LP solution cost matching across reference scenarios, soft resolution fallback.
 - `tests/test_validator.py`: Catching simulated physics violations (energy imbalance, C-rate breaches, battery bounds).
@@ -587,12 +593,43 @@ flowchart LR
   automatically, and Render's health check uses `/health`. The platform injects `PORT`; the container binds `0.0.0.0`.
 - **Secrets**: `OPENAI_API_KEY`, `GROQ_API_KEY`, `LLM_PROVIDER=openai` and `LLM_HEDGE_AFTER_S=5` are set as
   Render environment variables, never in the repository or the image.
-- **Keep-alive**: Render's free plan puts an idle service to sleep after 15 minutes, and waking it can take close
-  to a minute. A free [cron-job.org](https://cron-job.org) job requests `GET /health` every 5 minutes, so the
-  service stays warm and `/health` answers in well under a second whenever the judge calls it.
-- **Fallback image**: the same build is published as a public GHCR image pinned by digest
-  (see [Public Container Registry](#public-container-registry)); it runs anywhere with `docker run` if the live
-  endpoint is unavailable.
+- **Keep-alive** and **fallback image**: see below.
+
+### Availability during evaluation
+
+**The problem.** Render's free plan spins a web service down after 15 minutes without inbound traffic, and the
+first request after that has to wait for a cold start that can take close to a minute. The judge requires
+`/health` within 60 s and every `POST /optimize-energy` within 30 s, and evaluation can happen hours after
+submission, so an idle-then-cold service would risk health, latency and reachability points.
+
+**What we did.**
+
+| Measure | Detail |
+|---|---|
+| External keep-alive | A [cron-job.org](https://cron-job.org) job sends `GET https://gridwise-hampton.onrender.com/health` **every 5 minutes**, well inside Render's 15-minute idle window, so the instance never spins down. Failure notifications are enabled, so we are e-mailed if a ping ever fails. |
+| Fast readiness | `/health` is a constant response with no model or solver call; the container is ready about 3 s after start (limit 60 s). `HEAD /health` is answered too, for monitors that use it. |
+| Latency headroom | One overall 20 s deadline for the language model (judge limit 30 s); typical end-to-end latency about 2 s. |
+| Verified | After **17 minutes with no traffic except the cron ping**, `/health` answered in **0.13 s** (a cold start would take tens of seconds). |
+
+**If the live URL is still unreachable**, use the Docker fallback below: it is the exact build that runs on Render.
+
+### Docker fallback (if the live URL is unavailable)
+
+The fallback is the public image on GitHub Container Registry, pinned by digest (no login, no build needed).
+It exposes port 8000, binds `0.0.0.0`, runs as a non-root user and contains no secrets:
+
+```bash
+docker pull ghcr.io/fairuz-anadi/gridwise@sha256:35558555bee3635e1c147a6bc803e3b17387472c5b7dec9229da54238bf54e3c
+docker run --rm -p 8000:8000 -e LLM_PROVIDER=openai -e OPENAI_API_KEY=<your-key> \
+  ghcr.io/fairuz-anadi/gridwise@sha256:35558555bee3635e1c147a6bc803e3b17387472c5b7dec9229da54238bf54e3c
+
+curl http://localhost:8000/health                                   # {"status":"ok"} within a few seconds
+python scripts/run_public_cases.py --url http://localhost:8000      # 10/10 passed (from a clone of this repo)
+```
+
+`GROQ_API_KEY` can be added with another `-e` as the fallback provider. Without any key the container still
+starts and returns valid 200 responses, with every note reported as `no_op` ("Interpreter unavailable").
+This digest was pulled and run without credentials, exactly as above, before submission.
 
 **Live verification** (against the deployed URL, with the commands in [Testing & Evaluation](#testing--evaluation)):
 public cases 10/10 with exact reference costs; paraphrase eval 64/64 exact, p95 about 2 s; six concurrent uncached
