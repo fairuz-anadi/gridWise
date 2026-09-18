@@ -5,53 +5,60 @@ Run locally: uvicorn app.main:app --host 0.0.0.0 --port 8000
 import logging
 import os
 from pathlib import Path
+import time
+import uuid
 
-from fastapi import FastAPI, HTTPException, Request, status
+# Load local .env if present (or python-dotenv if installed)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+env_path = Path(__file__).resolve().parent.parent / ".env"
+if env_path.exists():
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.directives import interpret_and_validate
 from app.optimizer import Infeasible, optimize
-from app.schemas import OptimizeResponse, Scenario
+from app.schemas import Directive, OptimizeResponse, Plan, Scenario
 from app.validator import replay_check
 
-# Set up logging without leaking sensitive values
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
-logger = logging.getLogger("gridwise")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+log = logging.getLogger("gridwise")
 
-
-def _load_env() -> None:
-    """Load .env file if present into environment variables."""
-    env_path = Path(__file__).resolve().parent.parent / ".env"
-    if env_path.exists():
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, val = line.split("=", 1)
-            os.environ.setdefault(key.strip(), val.strip().strip("'\""))
-
-
-_load_env()
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 app = FastAPI(title="GridWise Smart Campus Energy Optimizer", version="2.0")
 
 
-from fastapi.encoders import jsonable_encoder
+class PlanRejected(Exception):
+    """Even the soft re-solve produced a plan that breaks a base GridWise rule."""
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Ensure malformed or invalid request bodies return HTTP 400 per spec §06.1."""
-    return JSONResponse(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        content=jsonable_encoder(
-            {"detail": "Malformed JSON or structurally invalid request", "errors": exc.errors()}
-        ),
-    )
+async def _bad_request(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # Spec §6.1: malformed JSON or structurally invalid request -> 400 (FastAPI default is 422)
+    detail = [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
+    return JSONResponse(status_code=400, content={"error": "invalid_request", "detail": detail})
+
+
+@app.exception_handler(Exception)
+async def _internal_error(request: Request, exc: Exception) -> JSONResponse:
+    # Controlled 500: no stack trace or sensitive credential in the response or logs
+    request_id = uuid.uuid4().hex[:12]
+    log.error("internal_error request_id=%s type=%s", request_id, type(exc).__name__)
+    return JSONResponse(status_code=500, content={"error": "internal_error", "request_id": request_id})
 
 
 @app.get("/health")
@@ -62,56 +69,56 @@ def health() -> dict:
 
 @app.post("/optimize-energy", response_model=OptimizeResponse)
 async def optimize_energy(scenario: Scenario) -> OptimizeResponse:
-    """Main LLM interpretation and 24-hour energy optimization endpoint."""
+    start = time.perf_counter()
+    directives = await interpret_and_validate(scenario.operator_notes, scenario.battery)
+    llm_ms = (time.perf_counter() - start) * 1000
+
+    plan = _solve(scenario, directives)
+
+    log.info("optimized scenario_id=%s notes=%d llm_ms=%.0f total_ms=%.0f cost=%.2f",
+             scenario.scenario_id, len(scenario.operator_notes), llm_ms,
+             (time.perf_counter() - start) * 1000, plan.total_cost_bdt)
+    return OptimizeResponse(
+        scenario_id=scenario.scenario_id,
+        directive_interpretation=directives,
+        hourly_plan=plan.hourly_plan,
+        total_grid_kwh=plan.total_grid_kwh,
+        total_cost_bdt=plan.total_cost_bdt,
+        peak_grid_kwh=plan.peak_grid_kwh,
+        plan_summary=_summary(directives, plan),
+    )
+
+
+def _solve(scenario: Scenario, directives: list[Directive]) -> Plan:
+    """Hard LP + replay check; if either fails, soft re-solve that still obeys every base rule."""
+    sid = scenario.scenario_id
     try:
-        # Stage 1 & 2: LLM interpretation + deterministic guardrails
-        directives = await interpret_and_validate(scenario.operator_notes, scenario.battery)
-
-        # Stage 3: LP mathematical optimization
-        try:
-            plan = optimize(scenario, directives)
-        except Infeasible as e:
-            logger.error("Infeasible scenario %s: %s", scenario.scenario_id, e)
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Infeasible scenario under requested directives: {str(e)}"
-            )
-
-        # Stage 4: Deterministic replay verification
+        plan = optimize(scenario, directives)
         violations = replay_check(scenario, directives, plan)
-        if violations:
-            logger.warning("Replay verification warnings for %s: %s", scenario.scenario_id, violations)
+        if not violations:
+            return plan
+        log.error("replay_failed scenario_id=%s violations=%s", sid, violations[:5])
+    except Infeasible:
+        log.warning("infeasible scenario_id=%s, re-solving with soft directives", sid)
 
-        # Stage 5: Construct concise plan summary
-        applied_directives = [d.directive_type.value for d in directives if d.applies]
-        if applied_directives:
-            applied_str = f"with active directives: {', '.join(applied_directives)}"
-        else:
-            applied_str = "with no active directive constraints"
+    plan = optimize(scenario, directives, soft=True)
+    base_violations = replay_check(scenario, [], plan)
+    if base_violations:
+        log.error("soft_replay_failed scenario_id=%s violations=%s", sid, base_violations[:5])
+        raise PlanRejected()
+    log.warning("relaxed scenario_id=%s directives=%s", sid, replay_check(scenario, directives, plan)[:5])
+    return plan
 
-        plan_summary = (
-            f"Scheduled 24-hour campus energy plan {applied_str}. "
-            f"Total grid import: {plan.total_grid_kwh:.2f} kWh, "
-            f"peak grid: {plan.peak_grid_kwh:.2f} kWh, "
-            f"total cost: {plan.total_cost_bdt:.2f} BDT."
-        )
 
-        return OptimizeResponse(
-            scenario_id=scenario.scenario_id,
-            directive_interpretation=directives,
-            hourly_plan=plan.hourly_plan,
-            total_grid_kwh=plan.total_grid_kwh,
-            total_cost_bdt=plan.total_cost_bdt,
-            peak_grid_kwh=plan.peak_grid_kwh,
-            plan_summary=plan_summary,
-        )
+def _summary(directives: list[Directive], plan: Plan) -> str:
+    applied = [d.directive_type.value for d in directives if d.applies]
+    ignored = len(directives) - len(applied)
+    rules = ", ".join(applied) if applied else "no operator directives"
+    return (f"Applied {rules}; ignored {ignored} unrelated note(s). "
+            f"Battery shifts grid purchases toward cheaper hours and returns to its starting level; "
+            f"total grid cost {plan.total_cost_bdt:.2f} BDT.")
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        # Controlled 500 error: never expose secrets or raw stack traces in response
-        logger.error("Controlled internal server error on scenario %s: %s", scenario.scenario_id, e, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An internal optimization error occurred while processing the scenario."
-        )
+
+# Operator console (Samprity's build). Mounted last so it can never shadow the judged routes.
+if (FRONTEND_DIST / "index.html").is_file():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="console")

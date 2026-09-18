@@ -2,64 +2,62 @@
 
 Field names follow Problem Statement sections 07 and 10 exactly; the judge checks them byte-for-byte.
 This file is the shared contract: everyone imports types from here.
+
+Request models validate structure; any failure becomes a 400 (handler in main.py).
 """
 from enum import Enum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+# Finite and >= 0: every numeric input in the spec is a non-negative quantity.
+NonNegFloat = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
 # ---------- Request (spec §07) ----------
 
 class HourInput(BaseModel):
-    hour: int = Field(..., ge=0, le=23, description="Hour of the day (0-23)")
-    demand_kwh: float = Field(..., ge=0.0, description="Campus demand in kWh")
-    solar_kwh: float = Field(..., ge=0.0, description="Available solar energy in kWh")
-    tariff_bdt_per_kwh: float = Field(..., ge=0.0, description="Grid tariff in BDT per kWh")
+    hour: Annotated[int, Field(ge=0, le=23)]
+    demand_kwh: NonNegFloat
+    solar_kwh: NonNegFloat
+    tariff_bdt_per_kwh: NonNegFloat
 
 
 class Battery(BaseModel):
-    capacity_kwh: float = Field(..., gt=0.0, description="Maximum storage capacity in kWh")
-    initial_energy_kwh: float = Field(..., ge=0.0, description="Starting energy in kWh")
-    minimum_energy_kwh: float = Field(..., ge=0.0, description="Base reserve level in kWh")
-    max_charge_kwh_per_hour: float = Field(..., ge=0.0, description="Hourly charge rate limit")
-    max_discharge_kwh_per_hour: float = Field(..., ge=0.0, description="Hourly discharge rate limit")
+    capacity_kwh: NonNegFloat
+    initial_energy_kwh: NonNegFloat
+    minimum_energy_kwh: NonNegFloat
+    max_charge_kwh_per_hour: NonNegFloat
+    max_discharge_kwh_per_hour: NonNegFloat
 
     @model_validator(mode="after")
-    def validate_battery_levels(self) -> "Battery":
-        if self.initial_energy_kwh > self.capacity_kwh:
-            raise ValueError("initial_energy_kwh cannot exceed capacity_kwh")
-        if self.minimum_energy_kwh > self.capacity_kwh:
-            raise ValueError("minimum_energy_kwh cannot exceed capacity_kwh")
+    def _levels_consistent(self):
+        # Outside this range no schedule can exist (end-of-day neutrality forces E_after[23] = initial).
+        if not (self.minimum_energy_kwh <= self.initial_energy_kwh <= self.capacity_kwh):
+            raise ValueError("battery must satisfy minimum_energy_kwh <= initial_energy_kwh <= capacity_kwh")
         return self
 
 
 class Scenario(BaseModel):
     """POST /optimize-energy request body."""
-    scenario_id: str = Field(..., min_length=1, description="Unique scenario identifier")
-    operator_notes: list[str] = Field(..., description="1-3 natural language notes")
-    hours: list[HourInput] = Field(..., description="Exactly 24 hourly entries")
+    scenario_id: str
+    operator_notes: Annotated[list[str], Field(min_length=1, max_length=3)]
+    hours: Annotated[list[HourInput], Field(min_length=24, max_length=24)]
     battery: Battery
 
     @field_validator("operator_notes")
     @classmethod
-    def validate_notes(cls, v: list[str]) -> list[str]:
-        if not (1 <= len(v) <= 3):
-            raise ValueError(f"operator_notes must contain between 1 and 3 items, got {len(v)}")
-        for idx, note in enumerate(v):
-            if not isinstance(note, str) or not note.strip():
-                raise ValueError(f"operator_note at index {idx} must be a non-empty string")
-        return v
+    def _notes_non_empty(cls, notes: list[str]) -> list[str]:
+        if any(not n.strip() for n in notes):
+            raise ValueError("operator_notes must be non-empty strings")
+        return notes
 
     @field_validator("hours")
     @classmethod
-    def validate_hours(cls, v: list[HourInput]) -> list[HourInput]:
-        if len(v) != 24:
-            raise ValueError(f"hours array must contain exactly 24 entries, got {len(v)}")
-        seen_hours = [item.hour for item in v]
-        if seen_hours != list(range(24)):
-            raise ValueError("hours must contain unique hours 0 through 23 in exact ascending order")
-        return v
+    def _hours_complete(cls, hours: list[HourInput]) -> list[HourInput]:
+        if sorted(h.hour for h in hours) != list(range(24)):
+            raise ValueError("hours must contain each hour 0-23 exactly once")
+        return sorted(hours, key=lambda h: h.hour)
 
 
 # ---------- Directives (spec §04, §10.2) ----------

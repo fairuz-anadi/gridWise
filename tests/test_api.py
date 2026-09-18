@@ -1,122 +1,66 @@
-"""API and schema validation tests."""
-from fastapi.testclient import TestClient
+"""API contract: endpoint names, status codes, response shape."""
+import copy
+
 import pytest
+from fastapi.testclient import TestClient
 
-from app.main import app
+import app.main
+from conftest import PUBLIC_CASES
 
-client = TestClient(app)
-
-
-def test_health_endpoint():
-    resp = client.get("/health")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+client = TestClient(app.main.app, raise_server_exceptions=False)
+VALID = PUBLIC_CASES[5]["input"]
 
 
-def test_malformed_json_returns_400():
-    resp = client.post(
-        "/optimize-energy",
-        content="not-json",
-        headers={"Content-Type": "application/json"}
-    )
-    assert resp.status_code == 400
+def test_health():
+    r = client.get("/health")
+    assert r.status_code == 200 and r.json() == {"status": "ok"}
 
 
-def test_missing_hours_returns_400():
-    payload = {
-        "scenario_id": "TEST-01",
-        "operator_notes": ["Valid note"],
-        "hours": [
-            {"hour": 0, "demand_kwh": 100, "solar_kwh": 0, "tariff_bdt_per_kwh": 5}
-            # Only 1 hour instead of 24
-        ],
-        "battery": {
-            "capacity_kwh": 200,
-            "initial_energy_kwh": 100,
-            "minimum_energy_kwh": 20,
-            "max_charge_kwh_per_hour": 50,
-            "max_discharge_kwh_per_hour": 50
-        }
-    }
-    resp = client.post("/optimize-energy", json=payload)
-    assert resp.status_code == 400
+def test_valid_request_returns_full_response():
+    r = client.post("/optimize-energy", json=VALID)
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) == {"scenario_id", "directive_interpretation", "hourly_plan", "total_grid_kwh",
+                         "total_cost_bdt", "peak_grid_kwh", "plan_summary"}
+    assert body["scenario_id"] == VALID["scenario_id"]
+    assert [d["note_index"] for d in body["directive_interpretation"]] == [0, 1, 2]
+    assert [p["hour"] for p in body["hourly_plan"]] == list(range(24))
 
 
-def test_empty_notes_returns_400():
-    payload = {
-        "scenario_id": "TEST-02",
-        "operator_notes": [],  # Must be 1..3
-        "hours": [
-            {"hour": h, "demand_kwh": 100, "solar_kwh": 0, "tariff_bdt_per_kwh": 5}
-            for h in range(24)
-        ],
-        "battery": {
-            "capacity_kwh": 200,
-            "initial_energy_kwh": 100,
-            "minimum_energy_kwh": 20,
-            "max_charge_kwh_per_hour": 50,
-            "max_discharge_kwh_per_hour": 50
-        }
-    }
-    resp = client.post("/optimize-energy", json=payload)
-    assert resp.status_code == 400
+def _broken(fn):
+    body = copy.deepcopy(VALID)
+    fn(body)
+    return body
 
 
-def test_too_many_notes_returns_400():
-    payload = {
-        "scenario_id": "TEST-03",
-        "operator_notes": ["Note 1", "Note 2", "Note 3", "Note 4"],  # Max 3
-        "hours": [
-            {"hour": h, "demand_kwh": 100, "solar_kwh": 0, "tariff_bdt_per_kwh": 5}
-            for h in range(24)
-        ],
-        "battery": {
-            "capacity_kwh": 200,
-            "initial_energy_kwh": 100,
-            "minimum_energy_kwh": 20,
-            "max_charge_kwh_per_hour": 50,
-            "max_discharge_kwh_per_hour": 50
-        }
-    }
-    resp = client.post("/optimize-energy", json=payload)
-    assert resp.status_code == 400
+BAD_REQUESTS = {
+    "23 hours": _broken(lambda b: b["hours"].pop()),
+    "duplicate hour": _broken(lambda b: b["hours"][5].update(hour=4)),
+    "no notes": _broken(lambda b: b.update(operator_notes=[])),
+    "4 notes": _broken(lambda b: b.update(operator_notes=["a", "b", "c", "d"])),
+    "blank note": _broken(lambda b: b.update(operator_notes=["  "])),
+    "negative demand": _broken(lambda b: b["hours"][3].update(demand_kwh=-5)),
+    "initial above capacity": _broken(lambda b: b["battery"].update(initial_energy_kwh=10_000)),
+    "missing battery": _broken(lambda b: b.pop("battery")),
+}
 
 
-def test_invalid_battery_capacity_returns_400():
-    payload = {
-        "scenario_id": "TEST-04",
-        "operator_notes": ["Clean panels"],
-        "hours": [
-            {"hour": h, "demand_kwh": 100, "solar_kwh": 0, "tariff_bdt_per_kwh": 5}
-            for h in range(24)
-        ],
-        "battery": {
-            "capacity_kwh": -10,  # Invalid negative capacity
-            "initial_energy_kwh": 100,
-            "minimum_energy_kwh": 20,
-            "max_charge_kwh_per_hour": 50,
-            "max_discharge_kwh_per_hour": 50
-        }
-    }
-    resp = client.post("/optimize-energy", json=payload)
-    assert resp.status_code == 400
+@pytest.mark.parametrize("name", BAD_REQUESTS)
+def test_invalid_request_is_400(name):
+    r = client.post("/optimize-energy", json=BAD_REQUESTS[name])
+    assert r.status_code == 400
+    assert r.json()["detail"]
 
 
-def test_end_to_end_optimize_energy():
-    import json
-    from pathlib import Path
-    fixtures = Path(__file__).parent / "fixtures" / "public_cases.json"
-    with open(fixtures, "r", encoding="utf-8") as f:
-        case = json.load(f)["cases"][0]
+def test_malformed_json_is_400():
+    r = client.post("/optimize-energy", content="{bad", headers={"content-type": "application/json"})
+    assert r.status_code == 400
 
-    resp = client.post("/optimize-energy", json=case["input"])
-    assert resp.status_code == 200
-    data = resp.json()
 
-    assert data["scenario_id"] == "SAMPLE-01"
-    assert len(data["directive_interpretation"]) == 2
-    assert len(data["hourly_plan"]) == 24
-    assert abs(data["total_cost_bdt"] - case["expected_output"]["total_cost_bdt"]) <= 0.01
-    assert abs(data["total_grid_kwh"] - case["expected_output"]["total_grid_kwh"]) <= 0.01
-    assert abs(data["peak_grid_kwh"] - case["expected_output"]["peak_grid_kwh"]) <= 0.01
-
+def test_internal_error_is_controlled(monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("sk-ant-should-never-appear")
+    monkeypatch.setattr(app.main, "optimize", boom)
+    r = client.post("/optimize-energy", json=VALID)
+    assert r.status_code == 500
+    assert "sk-ant" not in r.text and set(r.json()) == {"error", "request_id"}
