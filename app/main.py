@@ -5,34 +5,40 @@ Run locally:  uvicorn app.main:app --host 0.0.0.0 --port 8000
 import logging
 import time
 import uuid
+from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
 
-from app.directives import interpret_and_validate
-from app.optimizer import optimize
-from app.schemas import Directive, OptimizeResponse, Plan, Scenario
-from app.validator import replay_check
+load_dotenv()  # local .env only; on Render / Docker the variables come from the environment
+
+from fastapi import FastAPI, Request  # noqa: E402
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+from app.directives import interpret_and_validate  # noqa: E402
+from app.optimizer import Infeasible, optimize  # noqa: E402
+from app.schemas import Directive, OptimizeResponse, Plan, Scenario  # noqa: E402
+from app.validator import replay_check  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("gridwise")
+
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 app = FastAPI(title="GridWise")
 
 
 class PlanRejected(Exception):
-    """Our own replay check found violations in the optimizer's plan."""
+    """Even the soft re-solve produced a plan that breaks a base GridWise rule."""
 
 
 @app.exception_handler(RequestValidationError)
 async def _bad_request(request: Request, exc: RequestValidationError) -> JSONResponse:
     # Spec §6.1: malformed JSON or structurally invalid request -> 400 (FastAPI's default is 422).
-    details = [
-        {"field": ".".join(str(p) for p in e["loc"] if p != "body"), "message": e["msg"]}
-        for e in exc.errors()
-    ]
-    return JSONResponse(status_code=400, content={"error": "invalid_request", "details": details})
+    # Body keeps FastAPI's {detail: [{loc, msg}]} shape, which the console renders per field.
+    detail = [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
+    return JSONResponse(status_code=400, content={"error": "invalid_request", "detail": detail})
 
 
 @app.exception_handler(Exception)
@@ -54,12 +60,7 @@ async def optimize_energy(scenario: Scenario) -> OptimizeResponse:
     directives = await interpret_and_validate(scenario.operator_notes, scenario.battery)
     llm_ms = (time.perf_counter() - start) * 1000
 
-    plan = optimize(scenario, directives)
-    violations = replay_check(scenario, directives, plan)
-    if violations:
-        # TODO(Anadi, P1): soft-constraint re-solve before giving up.
-        log.error("replay_failed scenario_id=%s violations=%s", scenario.scenario_id, violations[:5])
-        raise PlanRejected()
+    plan = _solve(scenario, directives)
 
     log.info("optimized scenario_id=%s notes=%d llm_ms=%.0f total_ms=%.0f cost=%.2f",
              scenario.scenario_id, len(scenario.operator_notes), llm_ms,
@@ -75,6 +76,27 @@ async def optimize_energy(scenario: Scenario) -> OptimizeResponse:
     )
 
 
+def _solve(scenario: Scenario, directives: list[Directive]) -> Plan:
+    """Hard LP + replay check; if either fails, soft re-solve that still obeys every base rule."""
+    sid = scenario.scenario_id
+    try:
+        plan = optimize(scenario, directives)
+        violations = replay_check(scenario, directives, plan)
+        if not violations:
+            return plan
+        log.error("replay_failed scenario_id=%s violations=%s", sid, violations[:5])
+    except Infeasible:
+        log.warning("infeasible scenario_id=%s, re-solving with soft directives", sid)
+
+    plan = optimize(scenario, directives, soft=True)
+    base_violations = replay_check(scenario, [], plan)
+    if base_violations:
+        log.error("soft_replay_failed scenario_id=%s violations=%s", sid, base_violations[:5])
+        raise PlanRejected()
+    log.warning("relaxed scenario_id=%s directives=%s", sid, replay_check(scenario, directives, plan)[:5])
+    return plan
+
+
 def _summary(directives: list[Directive], plan: Plan) -> str:
     applied = [d.directive_type.value for d in directives if d.applies]
     ignored = len(directives) - len(applied)
@@ -82,3 +104,8 @@ def _summary(directives: list[Directive], plan: Plan) -> str:
     return (f"Applied {rules}; ignored {ignored} unrelated note(s). "
             f"Battery shifts grid purchases toward cheaper hours and returns to its starting level; "
             f"total grid cost {plan.total_cost_bdt:.2f} BDT.")
+
+
+# Operator console (Samprity's build). Mounted last so it can never shadow the judged routes.
+if (FRONTEND_DIST / "index.html").is_file():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="console")
