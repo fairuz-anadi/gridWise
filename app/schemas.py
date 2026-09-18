@@ -3,38 +3,61 @@
 Field names follow Problem Statement sections 07 and 10 exactly; the judge checks them byte-for-byte.
 This file is the shared contract: everyone imports types from here.
 
-TODO(Anadi, P0): structural validation -> 400 (exactly 24 unique hours 0-23, 1-3 non-empty notes,
-numeric values >= 0).
+Request models validate structure; any failure becomes a 400 (handler in main.py).
 """
 from enum import Enum
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+# Finite and >= 0: every numeric input in the spec is a non-negative quantity.
+NonNegFloat = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
 # ---------- Request (spec §07) ----------
 
 class HourInput(BaseModel):
-    hour: int
-    demand_kwh: float
-    solar_kwh: float
-    tariff_bdt_per_kwh: float
+    hour: Annotated[int, Field(ge=0, le=23)]
+    demand_kwh: NonNegFloat
+    solar_kwh: NonNegFloat
+    tariff_bdt_per_kwh: NonNegFloat
 
 
 class Battery(BaseModel):
-    capacity_kwh: float
-    initial_energy_kwh: float
-    minimum_energy_kwh: float
-    max_charge_kwh_per_hour: float
-    max_discharge_kwh_per_hour: float
+    capacity_kwh: NonNegFloat
+    initial_energy_kwh: NonNegFloat
+    minimum_energy_kwh: NonNegFloat
+    max_charge_kwh_per_hour: NonNegFloat
+    max_discharge_kwh_per_hour: NonNegFloat
+
+    @model_validator(mode="after")
+    def _levels_consistent(self):
+        # Outside this range no schedule can exist (end-of-day neutrality forces E_after[23] = initial).
+        if not (self.minimum_energy_kwh <= self.initial_energy_kwh <= self.capacity_kwh):
+            raise ValueError("battery must satisfy minimum_energy_kwh <= initial_energy_kwh <= capacity_kwh")
+        return self
 
 
 class Scenario(BaseModel):
     """POST /optimize-energy request body."""
     scenario_id: str
-    operator_notes: list[str]
-    hours: list[HourInput]
+    operator_notes: Annotated[list[str], Field(min_length=1, max_length=3)]
+    hours: Annotated[list[HourInput], Field(min_length=24, max_length=24)]
     battery: Battery
+
+    @field_validator("operator_notes")
+    @classmethod
+    def _notes_non_empty(cls, notes: list[str]) -> list[str]:
+        if any(not n.strip() for n in notes):
+            raise ValueError("operator_notes must be non-empty strings")
+        return notes
+
+    @field_validator("hours")
+    @classmethod
+    def _hours_complete(cls, hours: list[HourInput]) -> list[HourInput]:
+        if sorted(h.hour for h in hours) != list(range(24)):
+            raise ValueError("hours must contain each hour 0-23 exactly once")
+        return sorted(hours, key=lambda h: h.hour)
 
 
 # ---------- Directives (spec §04, §10.2) ----------
