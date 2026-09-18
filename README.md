@@ -431,12 +431,12 @@ docker run --rm -p 8000:8000 --env-file .env gridwise:latest
 ### Public Container Registry
 A prebuilt container image is available on GitHub Container Registry:
 ```bash
-docker pull ghcr.io/fairuz-anadi/gridwise@sha256:d03732b87e6f604ac7ddd5f132b07ea13db0e3083394cb2e8b15d5117b8d9418
+docker pull ghcr.io/fairuz-anadi/gridwise@sha256:480b3ebb712c696cfa8da027ed668b87233c3b7ff18d936affbecab9993304ea
 
 docker run --rm -p 8000:8000 \
   -e LLM_PROVIDER=openai \
   -e OPENAI_API_KEY=your-key \
-  ghcr.io/fairuz-anadi/gridwise@sha256:d03732b87e6f604ac7ddd5f132b07ea13db0e3083394cb2e8b15d5117b8d9418
+  ghcr.io/fairuz-anadi/gridwise@sha256:480b3ebb712c696cfa8da027ed668b87233c3b7ff18d936affbecab9993304ea
 ```
 
 ---
