@@ -8,7 +8,8 @@ and battery rule, and returns a verified 24-hour schedule.
 
 **Live deployment:** https://gridwise-hampton.onrender.com
 (`GET https://gridwise-hampton.onrender.com/health` · `POST https://gridwise-hampton.onrender.com/optimize-energy`;
-the operator console is at the root URL).
+the operator console is at the root URL). Check all ten public cases against it:
+`python scripts/run_public_cases.py --url https://gridwise-hampton.onrender.com` → `10/10 passed`.
 
 Endpoints: `GET /health` · `POST /optimize-energy` (contract in §4). Team: Anadi (API, optimizer,
 validator, deployment), Turjo (LLM interpretation and guardrails), Samprity (operator console, docs).
@@ -162,6 +163,10 @@ Expected: HTTP 200 with three `directive_interpretation` entries —
 and `total_cost_bdt` **34090.0**. The organizers' reference output is in
 `examples/sample-06.expected.json` (equivalent optimal schedules are accepted; the cost and the
 interpretation are what to compare).
+
+Without an API key in `.env` the service still starts and answers 200, but every note comes back as
+`no_op` ("Interpreter unavailable") and the cost is **31630.0** (no directives applied). That is the
+designed safe failure, not a bug; add a key and restart to get the result above.
 
 ### Run all ten public sample cases against the running server
 
